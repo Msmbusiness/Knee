@@ -143,15 +143,11 @@ class TibiaFemurPredictor:
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
     
-        if predicted_femur_gbr <= 8.5:
-            femur_size = min(max(predicted_femur_gbr, 1), 8)  # Clamp between 1 and 8
+        def highlight_row(s):
+            return ['background-color: yellow' if s['Size'] == int(predicted_femur_xgb) else '' for _ in s.index]
     
-            def highlight_row(s):
-                return ['background-color: yellow' if s['Size'] == femur_size else '' for _ in s.index]
-    
-            st.table(femur_df.style.apply(highlight_row, axis=1))
-        else:
-            st.table(femur_df)
+        st.table(femur_df.style.apply(highlight_row, axis=1))
+
 
     def calculate_metrics(self, X, y, bone, model_type):
         model = self.models[bone][model_type]
