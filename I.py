@@ -4,12 +4,13 @@ import numpy as np
 from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.model_selection import learning_curve, train_test_split
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
+from sklearn.model_selection import learning_curve
 from imblearn.over_sampling import RandomOverSampler
 import matplotlib.pyplot as plt
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
+from scipy.stats import kurtosis
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -152,6 +153,48 @@ class TibiaFemurPredictor:
         else:
             st.table(femur_df)
 
+    def calculate_metrics(self, X, y, bone):
+        models = self.models[bone]
+        preds_xgb = models['xgb'].predict(X)
+        preds_gbr = models['gbr'].predict(X)
+
+        # Calculate residuals
+        residuals_xgb = y - preds_xgb
+        residuals_gbr = y - preds_gbr
+
+        # Calculate MAE
+        mae_xgb = mean_absolute_error(y, preds_xgb)
+        mae_gbr = mean_absolute_error(y, preds_gbr)
+
+        # Calculate kurtosis of the residuals
+        residuals_kurtosis_xgb = kurtosis(residuals_xgb)
+        residuals_kurtosis_gbr = kurtosis(residuals_gbr)
+
+        metrics = [
+            (f"{bone.capitalize()} XGB", 
+            r2_score(y, preds_xgb), 
+            mean_squared_error(y, preds_xgb, squared=False), 
+            mean_squared_error(y, preds_xgb), 
+            mae_xgb, 
+            np.mean(np.abs((y - preds_xgb) / y)) * 100,
+            residuals_kurtosis_xgb),
+            (f"{bone.capitalize()} GBR", 
+            r2_score(y, preds_gbr), 
+            mean_squared_error(y, preds_gbr, squared=False), 
+            mean_squared_error(y, preds_gbr), 
+            mae_gbr, 
+            np.mean(np.abs((y - preds_gbr) / y)) * 100,
+            residuals_kurtosis_gbr)
+        ]
+        
+        return metrics
+
+    def display_metrics(self, metrics):
+        headers = ["Model", "R²", "RMSE", "MSE", "MAE", "MAPE", "Kurtosis"]
+        metrics_df = pd.DataFrame(metrics, columns=headers)
+        metrics_df = metrics_df.round(1)
+        st.table(metrics_df)
+
     def evaluate_models(self):
         if not self.models:
             st.error("Models are not trained yet.")
@@ -161,25 +204,10 @@ class TibiaFemurPredictor:
         y_tibia = self.data['tibia used'].values
         y_femur = self.data['femur used'].values
 
-        models = {
-            'Tibia XGB': self.models['tibia']['xgb'],
-            'Tibia GBR': self.models['tibia']['gbr'],
-            'Femur XGB': self.models['femur']['xgb'],
-            'Femur GBR': self.models['femur']['gbr']
-        }
+        tibia_metrics = self.calculate_metrics(X, y_tibia, 'tibia')
+        femur_metrics = self.calculate_metrics(X, y_femur, 'femur')
 
-        metrics = {'Model': [], 'R-squared': [], 'MAE': []}
-
-        for name, model in models.items():
-            y_pred = model.predict(X)
-            r2 = r2_score(y_tibia if 'Tibia' in name else y_femur, y_pred)
-            mae = mean_absolute_error(y_tibia if 'Tibia' in name else y_femur, y_pred)
-            metrics['Model'].append(name)
-            metrics['R-squared'].append(round(r2, 1))
-            metrics['MAE'].append(round(mae, 1))
-
-        metrics_df = pd.DataFrame(metrics)
-        st.table(metrics_df)
+        self.display_metrics(tibia_metrics + femur_metrics)
 
 def main():
     predictor = TibiaFemurPredictor()
