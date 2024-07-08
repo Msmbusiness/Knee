@@ -54,7 +54,7 @@ python-dateutil==2.9.0.post0
 pytz==2024.1
 pywin32-ctypes==0.2.2
 referencing==0.35.1
-requests==2.32.3
+
 rich==13.7.1
 rpds-py==0.18.1
 rsconnect_python==1.24.0
