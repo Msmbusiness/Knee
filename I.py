@@ -128,10 +128,10 @@ class TibiaFemurPredictor:
         predicted_femur_xgb = round(preds_femur_xgb[0], 1)
         predicted_femur_gbr = round(preds_femur_gbr[0], 1)
 
-        st.write(f"Predicted Optimotion Tibia Used with XGB: {predicted_tibia_xgb:.1f}")
-        st.write(f"Predicted Optimotion Tibia Used with GBR: {predicted_tibia_gbr:.1f}")
-        st.write(f"Predicted Optimotion Femur Used with XGB: {predicted_femur_xgb:.1f}")
-        st.write(f"Predicted Optimotion Femur Used with GBR: {predicted_femur_gbr:.1f}")
+        st.write(f"Predicted Optimotion Tibia with XGB: {predicted_tibia_xgb:.1f}")
+        st.write(f"Predicted Optimotion Tibia with GBR: {predicted_tibia_gbr:.1f}")
+        st.write(f"Predicted Optimotion Femur with XGB: {predicted_femur_xgb:.1f}")
+        st.write(f"Predicted Optimotion Femur with GBR: {predicted_femur_gbr:.1f}")
 
         if model_type == "xgb" and predicted_femur_xgb > 8.5:
             st.error("Predict size 9 femur", icon="🚨")
@@ -143,7 +143,7 @@ class TibiaFemurPredictor:
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
 
-        if predicted_femur_gbr <= 8.8:
+        if predicted_femur_gbr <= 8.5:
             femur_size = min(max(predicted_femur_gbr, 1), 8)  # Clamp between 1 and 8
 
             def highlight_row(s):
