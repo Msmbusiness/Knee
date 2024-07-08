@@ -152,6 +152,35 @@ class TibiaFemurPredictor:
         else:
             st.table(femur_df)
 
+    def evaluate_models(self):
+        if not self.models:
+            st.error("Models are not trained yet.")
+            return
+
+        X = self.data[['height_log', 'age_height_interaction', 'sex']].values
+        y_tibia = self.data['tibia used'].values
+        y_femur = self.data['femur used'].values
+
+        models = {
+            'Tibia XGB': self.models['tibia']['xgb'],
+            'Tibia GBR': self.models['tibia']['gbr'],
+            'Femur XGB': self.models['femur']['xgb'],
+            'Femur GBR': self.models['femur']['gbr']
+        }
+
+        metrics = {'Model': [], 'R-squared': [], 'MAE': []}
+
+        for name, model in models.items():
+            y_pred = model.predict(X)
+            r2 = r2_score(y_tibia if 'Tibia' in name else y_femur, y_pred)
+            mae = mean_absolute_error(y_tibia if 'Tibia' in name else y_femur, y_pred)
+            metrics['Model'].append(name)
+            metrics['R-squared'].append(r2)
+            metrics['MAE'].append(mae)
+
+        metrics_df = pd.DataFrame(metrics)
+        st.table(metrics_df)
+
 def main():
     predictor = TibiaFemurPredictor()
 
@@ -176,6 +205,9 @@ def main():
 
             if st.button("Evaluate Models"):
                 predictor.plot_superimposed_learning_curves()
+
+            if st.button("Show Model Metrics"):
+                predictor.evaluate_models()
 
     st.write("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
