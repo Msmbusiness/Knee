@@ -52,7 +52,6 @@ PyQt5-Qt5==5.15.2
 PyQt5-sip==12.13.0
 python-dateutil==2.9.0.post0
 pytz==2024.1
-
 pywin32-ctypes==0.2.2
 referencing==0.35.1
 requests==2.32.3
@@ -84,3 +83,4 @@ watchdog==4.0.1
 Werkzeug==3.0.3
 wheel==0.43.0
 xgboost==2.1.0
+
