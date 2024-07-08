@@ -176,13 +176,14 @@ class TibiaFemurPredictor:
     def display_interactive_table(self, tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr):
         metrics_data = {
             'Metric': ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis'],
-            'Tibia XGB': [round(tibia_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Tibia GBR': [round(tibia_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur XGB': [round(femur_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur GBR': [round(femur_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
+            'Tibia XGB': [tibia_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Tibia GBR': [tibia_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur XGB': [femur_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur GBR': [femur_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
         }
 
         df_metrics = pd.DataFrame(metrics_data)
+        df_metrics = df_metrics.round(3)  # Displaying metrics with three decimal places for better precision
         st.table(df_metrics)
 
     def evaluate_models(self):
