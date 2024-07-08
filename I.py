@@ -111,44 +111,44 @@ class TibiaFemurPredictor:
         if not self.models:
             st.error("Models are not trained yet.")
             return
-
+    
         X_new = np.array([[np.log1p(height), age * height, sex]])
         tibia_scaler = self.models['tibia']['scaler']
         femur_scaler = self.models['femur']['scaler']
         X_new_scaled_tibia = tibia_scaler.transform(X_new)
         X_new_scaled_femur = femur_scaler.transform(X_new)
-
+    
         preds_tibia_xgb = self.models['tibia']['xgb'].predict(X_new_scaled_tibia)
         preds_tibia_gbr = self.models['tibia']['gbr'].predict(X_new_scaled_tibia)
         preds_femur_xgb = self.models['femur']['xgb'].predict(X_new_scaled_femur)
         preds_femur_gbr = self.models['femur']['gbr'].predict(X_new_scaled_femur)
-
+    
         predicted_tibia_xgb = round(preds_tibia_xgb[0], 1)
         predicted_tibia_gbr = round(preds_tibia_gbr[0], 1)
         predicted_femur_xgb = round(preds_femur_xgb[0], 1)
         predicted_femur_gbr = round(preds_femur_gbr[0], 1)
-
+    
         st.write(f"Predicted Optimotion Tibia with XGB: {predicted_tibia_xgb:.1f}")
         st.write(f"Predicted Optimotion Tibia with GBR: {predicted_tibia_gbr:.1f}")
         st.write(f"Predicted Optimotion Femur with XGB: {predicted_femur_xgb:.1f}")
         st.write(f"Predicted Optimotion Femur with GBR: {predicted_femur_gbr:.1f}")
-
+    
         if model_type == "xgb" and predicted_femur_xgb > 8.5:
             st.error("Predict size 9 femur", icon="🚨")
-
+    
         femur_df = pd.DataFrame(femur_sizes).T
         femur_df.columns = ["A", "B"]
         femur_df = femur_df.round(1)
         femur_df.index.name = "Size"
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
-
+    
         if predicted_femur_gbr <= 8.5:
             femur_size = min(max(predicted_femur_gbr, 1), 8)  # Clamp between 1 and 8
-
+    
             def highlight_row(s):
-                return ['background-color: yellow' if s['Size'] == femur_size else '' for _ in s]
-
+                return ['background-color: yellow' if s['Size'] == femur_size else '' for _ in s.index]
+    
             st.table(femur_df.style.apply(highlight_row, axis=1))
         else:
             st.table(femur_df)
