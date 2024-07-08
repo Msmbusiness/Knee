@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
 from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
@@ -32,29 +31,13 @@ femur_sizes = {
     8: (75.3, 80)
 }
 
-def get_csv_files_from_github(repo_owner, repo_name, branch='main'):
-    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents?ref={branch}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        files = response.json()
-        csv_files = [file['name'] for file in files if file['name'].endswith('.csv')]
-        return csv_files
-    else:
-        st.error(f"Failed to fetch files from GitHub repository. Status code: {response.status_code}")
-        st.error(f"Response: {response.text}")
-        return []
-
 @st.cache_data(show_spinner=False)
-def load_data(file_url):
-    try:
-        data = pd.read_csv(file_url)
-        data.columns = data.columns.str.strip()
-        data['age_height_interaction'] = data['age'] * data['height']
-        data['height_log'] = np.log1p(data['height'])
-        return data
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-        return pd.DataFrame()
+def load_data(file):
+    data = pd.read_csv(file)
+    data.columns = data.columns.str.strip()
+    data['age_height_interaction'] = data['age'] * data['height']
+    data['height_log'] = np.log1p(data['height'])
+    return data
 
 @st.cache_data(show_spinner=False)
 def train_and_scale_models(data, features):
@@ -128,43 +111,47 @@ class TibiaFemurPredictor:
         if not self.models:
             st.error("Models are not trained yet.")
             return
-    
+
         X_new = np.array([[np.log1p(height), age * height, sex]])
         tibia_scaler = self.models['tibia']['scaler']
         femur_scaler = self.models['femur']['scaler']
         X_new_scaled_tibia = tibia_scaler.transform(X_new)
         X_new_scaled_femur = femur_scaler.transform(X_new)
-    
+
         preds_tibia_xgb = self.models['tibia']['xgb'].predict(X_new_scaled_tibia)
         preds_tibia_gbr = self.models['tibia']['gbr'].predict(X_new_scaled_tibia)
         preds_femur_xgb = self.models['femur']['xgb'].predict(X_new_scaled_femur)
         preds_femur_gbr = self.models['femur']['gbr'].predict(X_new_scaled_femur)
-    
+
         predicted_tibia_xgb = round(preds_tibia_xgb[0], 1)
         predicted_tibia_gbr = round(preds_tibia_gbr[0], 1)
         predicted_femur_xgb = round(preds_femur_xgb[0], 1)
         predicted_femur_gbr = round(preds_femur_gbr[0], 1)
-    
-        st.write(f"Predicted Optimotion Tibia with XGB: {predicted_tibia_xgb:.1f}")
-        st.write(f"Predicted Optimotion Tibia with GBR: {predicted_tibia_gbr:.1f}")
-        st.write(f"Predicted Optimotion Femur with XGB: {predicted_femur_xgb:.1f}")
-        st.write(f"Predicted Optimotion Femur with GBR: {predicted_femur_gbr:.1f}")
-    
+
+        st.write(f"Predicted Optimotion Tibia Used with XGB: {predicted_tibia_xgb:.1f}")
+        st.write(f"Predicted Optimotion Tibia Used with GBR: {predicted_tibia_gbr:.1f}")
+        st.write(f"Predicted Optimotion Femur Used with XGB: {predicted_femur_xgb:.1f}")
+        st.write(f"Predicted Optimotion Femur Used with GBR: {predicted_femur_gbr:.1f}")
+
         if model_type == "xgb" and predicted_femur_xgb > 8.5:
             st.error("Predict size 9 femur", icon="🚨")
-    
+
         femur_df = pd.DataFrame(femur_sizes).T
         femur_df.columns = ["A", "B"]
         femur_df = femur_df.round(1)
         femur_df.index.name = "Size"
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
-    
-        def highlight_row(s):
-            return ['background-color: yellow' if s['Size'] == int(predicted_femur_xgb) else '' for _ in s.index]
-    
-        st.table(femur_df.style.apply(highlight_row, axis=1))
 
+        if predicted_femur_gbr <= 8.8:
+            femur_size = min(max(predicted_femur_gbr, 1), 8)  # Clamp between 1 and 8
+
+            def highlight_row(s):
+                return ['background-color: yellow' if s['Size'] == femur_size else '' for _ in s]
+
+            st.table(femur_df.style.apply(highlight_row, axis=1))
+        else:
+            st.table(femur_df)
 
     def calculate_metrics(self, X, y, bone, model_type):
         model = self.models[bone][model_type]
@@ -189,13 +176,14 @@ class TibiaFemurPredictor:
     def display_interactive_table(self, tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr):
         metrics_data = {
             'Metric': ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis'],
-            'Tibia XGB': [round(tibia_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Tibia GBR': [round(tibia_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur XGB': [round(femur_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur GBR': [round(femur_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
+            'Tibia XGB': [tibia_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Tibia GBR': [tibia_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur XGB': [femur_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur GBR': [femur_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
         }
 
         df_metrics = pd.DataFrame(metrics_data)
+        df_metrics = df_metrics.round(3)  # Displaying metrics with three decimal places for better precision
         st.table(df_metrics)
 
     def evaluate_models(self):
@@ -218,38 +206,30 @@ class TibiaFemurPredictor:
 def main():
     predictor = TibiaFemurPredictor()
 
-    repo_owner = "Msmbusiness"
-    repo_name = "Knee"
+    uploaded_file = st.file_uploader("Upload Data File", type="csv")
+    if uploaded_file is not None:
+        predictor.data = load_data(uploaded_file)
+        st.success("Data file loaded successfully.")
 
-    csv_files = get_csv_files_from_github(repo_owner, repo_name)
-    if csv_files:
-        selected_file = st.selectbox("Select Data File", csv_files)
-        if selected_file:
-            file_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/{selected_file}"
-            predictor.data = load_data(file_url)
-            st.success("Data file loaded successfully.")
+        if st.button("Train Models"):
+            predictor.train_models()
 
-            if st.button("Train Models"):
-                predictor.train_models()
+        if 'models' in st.session_state:
+            predictor.models = st.session_state['models']
+            age = st.number_input("Age:", min_value=0, max_value=120, value=30)
+            height = st.number_input("Height (inches):", min_value=0.0, max_value=100.0, value=65.0)
+            sex = st.selectbox("Sex:", ["Female", "Male"])
+            sex_val = 0 if sex == "Female" else 1
+            model_type = st.selectbox("Model:", ["xgb", "gbr"])
 
-            if 'models' in st.session_state:
-                predictor.models = st.session_state['models']
-                age = st.number_input("Age:", min_value=0, max_value=120, value=30)
-                height = st.number_input("Height (inches):", min_value=0.0, max_value=100.0, value=65.0)
-                sex = st.selectbox("Sex:", ["Female", "Male"])
-                sex_val = 0 if sex == "Female" else 1
-                model_type = st.selectbox("Model:", ["xgb", "gbr"])
+            if st.button("Predict"):
+                predictor.predict(age, height, sex_val, model_type)
 
-                if st.button("Predict"):
-                    predictor.predict(age, height, sex_val, model_type)
+            if st.button("Evaluate Models"):
+                predictor.plot_superimposed_learning_curves()
 
-                if st.button("Evaluate Models"):
-                    predictor.plot_superimposed_learning_curves()
-
-                if st.button("Show Model Metrics"):
-                    predictor.evaluate_models()
-    else:
-        st.error("No CSV files found in the GitHub repository.")
+            if st.button("Show Model Metrics"):
+                predictor.evaluate_models()
 
     st.write("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
@@ -257,3 +237,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
