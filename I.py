@@ -40,16 +40,21 @@ def get_csv_files_from_github(repo_owner, repo_name, branch='main'):
         csv_files = [file['name'] for file in files if file['name'].endswith('.csv')]
         return csv_files
     else:
-        st.error("Failed to fetch files from GitHub repository.")
+        st.error(f"Failed to fetch files from GitHub repository. Status code: {response.status_code}")
+        st.error(f"Response: {response.text}")
         return []
 
 @st.cache_data(show_spinner=False)
 def load_data(file_url):
-    data = pd.read_csv(file_url)
-    data.columns = data.columns.str.strip()
-    data['age_height_interaction'] = data['age'] * data['height']
-    data['height_log'] = np.log1p(data['height'])
-    return data
+    try:
+        data = pd.read_csv(file_url)
+        data.columns = data.columns.str.strip()
+        data['age_height_interaction'] = data['age'] * data['height']
+        data['height_log'] = np.log1p(data['height'])
+        return data
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(show_spinner=False)
 def train_and_scale_models(data, features):
@@ -217,31 +222,34 @@ def main():
     repo_name = "Knee"
 
     csv_files = get_csv_files_from_github(repo_owner, repo_name)
-    selected_file = st.selectbox("Select Data File", csv_files)
-    if selected_file:
-        file_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/{selected_file}"
-        predictor.data = load_data(file_url)
-        st.success("Data file loaded successfully.")
+    if csv_files:
+        selected_file = st.selectbox("Select Data File", csv_files)
+        if selected_file:
+            file_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/{selected_file}"
+            predictor.data = load_data(file_url)
+            st.success("Data file loaded successfully.")
 
-        if st.button("Train Models"):
-            predictor.train_models()
+            if st.button("Train Models"):
+                predictor.train_models()
 
-        if 'models' in st.session_state:
-            predictor.models = st.session_state['models']
-            age = st.number_input("Age:", min_value=0, max_value=120, value=30)
-            height = st.number_input("Height (inches):", min_value=0.0, max_value=100.0, value=65.0)
-            sex = st.selectbox("Sex:", ["Female", "Male"])
-            sex_val = 0 if sex == "Female" else 1
-            model_type = st.selectbox("Model:", ["xgb", "gbr"])
+            if 'models' in st.session_state:
+                predictor.models = st.session_state['models']
+                age = st.number_input("Age:", min_value=0, max_value=120, value=30)
+                height = st.number_input("Height (inches):", min_value=0.0, max_value=100.0, value=65.0)
+                sex = st.selectbox("Sex:", ["Female", "Male"])
+                sex_val = 0 if sex == "Female" else 1
+                model_type = st.selectbox("Model:", ["xgb", "gbr"])
 
-            if st.button("Predict"):
-                predictor.predict(age, height, sex_val, model_type)
+                if st.button("Predict"):
+                    predictor.predict(age, height, sex_val, model_type)
 
-            if st.button("Evaluate Models"):
-                predictor.plot_superimposed_learning_curves()
+                if st.button("Evaluate Models"):
+                    predictor.plot_superimposed_learning_curves()
 
-            if st.button("Show Model Metrics"):
-                predictor.evaluate_models()
+                if st.button("Show Model Metrics"):
+                    predictor.evaluate_models()
+    else:
+        st.error("No CSV files found in the GitHub repository.")
 
     st.write("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
@@ -249,5 +257,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
