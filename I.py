@@ -8,9 +8,9 @@ from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 from sklearn.model_selection import learning_curve
 from imblearn.over_sampling import RandomOverSampler
 import matplotlib.pyplot as plt
+from scipy.stats import kurtosis
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
-from scipy.stats import kurtosis
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -153,61 +153,56 @@ class TibiaFemurPredictor:
         else:
             st.table(femur_df)
 
-    def calculate_metrics(self, X, y, bone):
-        models = self.models[bone]
-        preds_xgb = models['xgb'].predict(X)
-        preds_gbr = models['gbr'].predict(X)
+    def calculate_metrics(self, X, y, bone, model_type):
+        model = self.models[bone][model_type]
+        preds = model.predict(X)
 
-        # Calculate residuals
-        residuals_xgb = y - preds_xgb
-        residuals_gbr = y - preds_gbr
+        residuals = y - preds
+        mae = mean_absolute_error(y, preds)
+        residuals_kurtosis = kurtosis(residuals)
 
-        # Calculate MAE
-        mae_xgb = mean_absolute_error(y, preds_xgb)
-        mae_gbr = mean_absolute_error(y, preds_gbr)
+        metrics = {
+            'model': model_type,
+            'r2_score': r2_score(y, preds),
+            'rmse': mean_squared_error(y, preds, squared=False),
+            'mse': mean_squared_error(y, preds),
+            'mae': mae,
+            'mape': np.mean(np.abs((y - preds) / y)) * 100,
+            'kurtosis': residuals_kurtosis,
+            'residuals': residuals
+        }
 
-        # Calculate kurtosis of the residuals
-        residuals_kurtosis_xgb = kurtosis(residuals_xgb)
-        residuals_kurtosis_gbr = kurtosis(residuals_gbr)
-
-        metrics = [
-            (f"{bone.capitalize()} XGB", 
-            r2_score(y, preds_xgb), 
-            mean_squared_error(y, preds_xgb, squared=False), 
-            mean_squared_error(y, preds_xgb), 
-            mae_xgb, 
-            np.mean(np.abs((y - preds_xgb) / y)) * 100,
-            residuals_kurtosis_xgb),
-            (f"{bone.capitalize()} GBR", 
-            r2_score(y, preds_gbr), 
-            mean_squared_error(y, preds_gbr, squared=False), 
-            mean_squared_error(y, preds_gbr), 
-            mae_gbr, 
-            np.mean(np.abs((y - preds_gbr) / y)) * 100,
-            residuals_kurtosis_gbr)
-        ]
-        
         return metrics
 
-    def display_metrics(self, metrics):
-        headers = ["Model", "R²", "RMSE", "MSE", "MAE", "MAPE", "Kurtosis"]
-        metrics_df = pd.DataFrame(metrics, columns=headers)
-        metrics_df = metrics_df.round(1)
-        st.table(metrics_df)
+    def display_interactive_table(self, tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr):
+        metrics_data = {
+            'Metric': ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis'],
+            'Tibia XGB': [tibia_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Tibia GBR': [tibia_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur XGB': [femur_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur GBR': [femur_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
+        }
+
+        df_metrics = pd.DataFrame(metrics_data)
+        df_metrics = df_metrics.round(1)
+        st.table(df_metrics)
 
     def evaluate_models(self):
-        if not self.models:
-            st.error("Models are not trained yet.")
-            return
-
-        X = self.data[['height_log', 'age_height_interaction', 'sex']].values
+        features = ['height_log', 'age_height_interaction', 'sex']
+        X_tibia = self.data[features].values
         y_tibia = self.data['tibia used'].values
+        X_femur = self.data[features].values
         y_femur = self.data['femur used'].values
 
-        tibia_metrics = self.calculate_metrics(X, y_tibia, 'tibia')
-        femur_metrics = self.calculate_metrics(X, y_femur, 'femur')
+        X_tibia_scaled = self.models['tibia']['scaler'].transform(X_tibia)
+        X_femur_scaled = self.models['femur']['scaler'].transform(X_femur)
 
-        self.display_metrics(tibia_metrics + femur_metrics)
+        tibia_metrics_xgb = self.calculate_metrics(X_tibia_scaled, y_tibia, 'tibia', 'xgb')
+        tibia_metrics_gbr = self.calculate_metrics(X_tibia_scaled, y_tibia, 'tibia', 'gbr')
+        femur_metrics_xgb = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'xgb')
+        femur_metrics_gbr = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'gbr')
+
+        self.display_interactive_table(tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr)
 
 def main():
     predictor = TibiaFemurPredictor()
