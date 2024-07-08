@@ -83,7 +83,7 @@ class TibiaFemurPredictor:
         st.success("Models trained and scalers initialized.")
 
     def plot_learning_curve(self, estimator, title, X, y, ax, color):
-        train_sizes, train_scores, test_scores = learning_curve(estimator, X, y, cv=5, n_jobs=-1, train_sizes=np.linspace(.1, 1.0, 5))
+        train_sizes, train_scores, test_scores = learning_curve(estimator, X, y, cv=5, n_jobs=1, train_sizes=np.linspace(.1, 1.0, 5))
         train_scores_mean = np.mean(train_scores, axis=1)
         test_scores_mean = np.mean(test_scores, axis=1)
         ax.plot(train_sizes, train_scores_mean, 'o-', color=color, label=f"Training score {title}")
@@ -111,47 +111,42 @@ class TibiaFemurPredictor:
         if not self.models:
             st.error("Models are not trained yet.")
             return
-
+    
         X_new = np.array([[np.log1p(height), age * height, sex]])
         tibia_scaler = self.models['tibia']['scaler']
         femur_scaler = self.models['femur']['scaler']
         X_new_scaled_tibia = tibia_scaler.transform(X_new)
         X_new_scaled_femur = femur_scaler.transform(X_new)
-
+    
         preds_tibia_xgb = self.models['tibia']['xgb'].predict(X_new_scaled_tibia)
         preds_tibia_gbr = self.models['tibia']['gbr'].predict(X_new_scaled_tibia)
         preds_femur_xgb = self.models['femur']['xgb'].predict(X_new_scaled_femur)
         preds_femur_gbr = self.models['femur']['gbr'].predict(X_new_scaled_femur)
-
+    
         predicted_tibia_xgb = round(preds_tibia_xgb[0], 1)
         predicted_tibia_gbr = round(preds_tibia_gbr[0], 1)
         predicted_femur_xgb = round(preds_femur_xgb[0], 1)
         predicted_femur_gbr = round(preds_femur_gbr[0], 1)
-
-        st.write(f"Predicted Optimotion Tibia Used with XGB: {predicted_tibia_xgb:.1f}")
-        st.write(f"Predicted Optimotion Tibia Used with GBR: {predicted_tibia_gbr:.1f}")
-        st.write(f"Predicted Optimotion Femur Used with XGB: {predicted_femur_xgb:.1f}")
-        st.write(f"Predicted Optimotion Femur Used with GBR: {predicted_femur_gbr:.1f}")
-
+    
+        st.write(f"Predicted Optimotion Tibia with XGB: {predicted_tibia_xgb:.1f}")
+        st.write(f"Predicted Optimotion Tibia with GBR: {predicted_tibia_gbr:.1f}")
+        st.write(f"Predicted Optimotion Femur with XGB: {predicted_femur_xgb:.1f}")
+        st.write(f"Predicted Optimotion Femur with GBR: {predicted_femur_gbr:.1f}")
+    
         if model_type == "xgb" and predicted_femur_xgb > 8.5:
             st.error("Predict size 9 femur", icon="🚨")
-
+    
         femur_df = pd.DataFrame(femur_sizes).T
         femur_df.columns = ["A", "B"]
         femur_df = femur_df.round(1)
         femur_df.index.name = "Size"
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
-
-        if predicted_femur_gbr <= 8.8:
-            femur_size = min(max(predicted_femur_gbr, 1), 8)  # Clamp between 1 and 8
-
-            def highlight_row(s):
-                return ['background-color: yellow' if s['Size'] == femur_size else '' for _ in s]
-
-            st.table(femur_df.style.apply(highlight_row, axis=1))
-        else:
-            st.table(femur_df)
+    
+        def highlight_row(s):
+            return ['background-color: yellow' if s['Size'] == int(predicted_femur_xgb) else '' for _ in s.index]
+    
+        st.table(femur_df.style.apply(highlight_row, axis=1))
 
     def calculate_metrics(self, X, y, bone, model_type):
         model = self.models[bone][model_type]
@@ -176,14 +171,13 @@ class TibiaFemurPredictor:
     def display_interactive_table(self, tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr):
         metrics_data = {
             'Metric': ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis'],
-            'Tibia XGB': [tibia_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Tibia GBR': [tibia_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur XGB': [femur_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur GBR': [femur_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
+            'Tibia XGB': [round(tibia_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Tibia GBR': [round(tibia_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur XGB': [round(femur_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur GBR': [round(femur_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
         }
 
         df_metrics = pd.DataFrame(metrics_data)
-        df_metrics = df_metrics.round(3)  # Displaying metrics with three decimal places for better precision
         st.table(df_metrics)
 
     def evaluate_models(self):
