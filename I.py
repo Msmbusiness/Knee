@@ -5,7 +5,7 @@ from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.model_selection import learning_curve
+from sklearn.model_selection import learning_curve, train_test_split
 from imblearn.over_sampling import RandomOverSampler
 import matplotlib.pyplot as plt
 import warnings
@@ -127,10 +127,10 @@ class TibiaFemurPredictor:
         predicted_femur_xgb = round(preds_femur_xgb[0], 1)
         predicted_femur_gbr = round(preds_femur_gbr[0], 1)
 
-        st.write(f"Predicted Optimotion Tibia Used with XGB: {predicted_tibia_xgb}")
-        st.write(f"Predicted Optimotion Tibia Used with GBR: {predicted_tibia_gbr}")
-        st.write(f"Predicted Optimotion Femur Used with XGB: {predicted_femur_xgb}")
-        st.write(f"Predicted Optimotion Femur Used with GBR: {predicted_femur_gbr}")
+        st.write(f"Predicted Optimotion Tibia Used with XGB: {predicted_tibia_xgb:.1f}")
+        st.write(f"Predicted Optimotion Tibia Used with GBR: {predicted_tibia_gbr:.1f}")
+        st.write(f"Predicted Optimotion Femur Used with XGB: {predicted_femur_xgb:.1f}")
+        st.write(f"Predicted Optimotion Femur Used with GBR: {predicted_femur_gbr:.1f}")
 
         if model_type == "xgb" and predicted_femur_xgb > 8.5:
             st.error("Predict size 9 femur", icon="🚨")
@@ -175,8 +175,8 @@ class TibiaFemurPredictor:
             r2 = r2_score(y_tibia if 'Tibia' in name else y_femur, y_pred)
             mae = mean_absolute_error(y_tibia if 'Tibia' in name else y_femur, y_pred)
             metrics['Model'].append(name)
-            metrics['R-squared'].append(r2)
-            metrics['MAE'].append(mae)
+            metrics['R-squared'].append(round(r2, 1))
+            metrics['MAE'].append(round(mae, 1))
 
         metrics_df = pd.DataFrame(metrics)
         st.table(metrics_df)
@@ -215,3 +215,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
