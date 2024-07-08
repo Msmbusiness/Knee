@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
@@ -31,9 +32,20 @@ femur_sizes = {
     8: (75.3, 80)
 }
 
+def get_csv_files_from_github(repo_owner, repo_name, branch='main'):
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents?ref={branch}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        files = response.json()
+        csv_files = [file['name'] for file in files if file['name'].endswith('.csv')]
+        return csv_files
+    else:
+        st.error("Failed to fetch files from GitHub repository.")
+        return []
+
 @st.cache_data(show_spinner=False)
-def load_data(file):
-    data = pd.read_csv(file)
+def load_data(file_url):
+    data = pd.read_csv(file_url)
     data.columns = data.columns.str.strip()
     data['age_height_interaction'] = data['age'] * data['height']
     data['height_log'] = np.log1p(data['height'])
@@ -172,14 +184,13 @@ class TibiaFemurPredictor:
     def display_interactive_table(self, tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr):
         metrics_data = {
             'Metric': ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis'],
-            'Tibia XGB': [tibia_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Tibia GBR': [tibia_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur XGB': [femur_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur GBR': [femur_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
+            'Tibia XGB': [round(tibia_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Tibia GBR': [round(tibia_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur XGB': [round(femur_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur GBR': [round(femur_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
         }
 
         df_metrics = pd.DataFrame(metrics_data)
-        df_metrics = df_metrics.round(3)  # Displaying metrics with three decimal places for better precision
         st.table(df_metrics)
 
     def evaluate_models(self):
@@ -202,9 +213,15 @@ class TibiaFemurPredictor:
 def main():
     predictor = TibiaFemurPredictor()
 
-    uploaded_file = st.file_uploader("Upload Data File", type="csv")
-    if uploaded_file is not None:
-        predictor.data = load_data(uploaded_file)
+    repo_owner = "Msmbusiness"
+    repo_name = "Knee"
+
+
+    csv_files = get_csv_files_from_github(repo_owner, repo_name)
+    selected_file = st.selectbox("Select Data File", csv_files)
+    if selected_file:
+        file_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/{selected_file}"
+        predictor.data = load_data(file_url)
         st.success("Data file loaded successfully.")
 
         if st.button("Train Models"):
