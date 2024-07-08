@@ -4,10 +4,11 @@ import numpy as np
 from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 from sklearn.model_selection import learning_curve
 from imblearn.over_sampling import RandomOverSampler
 import matplotlib.pyplot as plt
+from scipy.stats import kurtosis
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
 
@@ -127,10 +128,10 @@ class TibiaFemurPredictor:
         predicted_femur_xgb = round(preds_femur_xgb[0], 1)
         predicted_femur_gbr = round(preds_femur_gbr[0], 1)
 
-        st.write(f"Predicted Optimotion Tibia Used with XGB: {predicted_tibia_xgb}")
-        st.write(f"Predicted Optimotion Tibia Used with GBR: {predicted_tibia_gbr}")
-        st.write(f"Predicted Optimotion Femur Used with XGB: {predicted_femur_xgb}")
-        st.write(f"Predicted Optimotion Femur Used with GBR: {predicted_femur_gbr}")
+        st.write(f"Predicted Optimotion Tibia Used with XGB: {predicted_tibia_xgb:.1f}")
+        st.write(f"Predicted Optimotion Tibia Used with GBR: {predicted_tibia_gbr:.1f}")
+        st.write(f"Predicted Optimotion Femur Used with XGB: {predicted_femur_xgb:.1f}")
+        st.write(f"Predicted Optimotion Femur Used with GBR: {predicted_femur_gbr:.1f}")
 
         if model_type == "xgb" and predicted_femur_xgb > 8.5:
             st.error("Predict size 9 femur", icon="🚨")
@@ -151,6 +152,56 @@ class TibiaFemurPredictor:
             st.table(femur_df.style.apply(highlight_row, axis=1))
         else:
             st.table(femur_df)
+
+    def calculate_metrics(self, X, y, bone, model_type):
+        model = self.models[bone][model_type]
+        preds = model.predict(X)
+
+        residuals = y - preds
+        mae = mean_absolute_error(y, preds)
+        residuals_kurtosis = kurtosis(residuals)
+
+        metrics = {
+            'model': model_type,
+            'r2_score': r2_score(y, preds),
+            'rmse': mean_squared_error(y, preds, squared=False),
+            'mse': mean_squared_error(y, preds),
+            'mae': mae,
+            'mape': np.mean(np.abs((y - preds) / y)) * 100,
+            'kurtosis': residuals_kurtosis
+        }
+
+        return metrics
+
+    def display_interactive_table(self, tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr):
+        metrics_data = {
+            'Metric': ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis'],
+            'Tibia XGB': [tibia_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Tibia GBR': [tibia_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur XGB': [femur_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur GBR': [femur_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
+        }
+
+        df_metrics = pd.DataFrame(metrics_data)
+        df_metrics = df_metrics.round(3)  # Displaying metrics with three decimal places for better precision
+        st.table(df_metrics)
+
+    def evaluate_models(self):
+        features = ['height_log', 'age_height_interaction', 'sex']
+        X_tibia = self.data[features].values
+        y_tibia = self.data['tibia used'].values
+        X_femur = self.data[features].values
+        y_femur = self.data['femur used'].values
+
+        X_tibia_scaled = self.models['tibia']['scaler'].transform(X_tibia)
+        X_femur_scaled = self.models['femur']['scaler'].transform(X_femur)
+
+        tibia_metrics_xgb = self.calculate_metrics(X_tibia_scaled, y_tibia, 'tibia', 'xgb')
+        tibia_metrics_gbr = self.calculate_metrics(X_tibia_scaled, y_tibia, 'tibia', 'gbr')
+        femur_metrics_xgb = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'xgb')
+        femur_metrics_gbr = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'gbr')
+
+        self.display_interactive_table(tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr)
 
 def main():
     predictor = TibiaFemurPredictor()
@@ -176,6 +227,9 @@ def main():
 
             if st.button("Evaluate Models"):
                 predictor.plot_superimposed_learning_curves()
+
+            if st.button("Show Model Metrics"):
+                predictor.evaluate_models()
 
     st.write("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
