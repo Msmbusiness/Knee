@@ -128,10 +128,10 @@ class TibiaFemurPredictor:
         predicted_femur_xgb = round(preds_femur_xgb[0], 1)
         predicted_femur_gbr = round(preds_femur_gbr[0], 1)
 
-        st.write(f"Predicted Optimotion Tibia Used with XGB: {predicted_tibia_xgb:.1f}")
-        st.write(f"Predicted Optimotion Tibia Used with GBR: {predicted_tibia_gbr:.1f}")
-        st.write(f"Predicted Optimotion Femur Used with XGB: {predicted_femur_xgb:.1f}")
-        st.write(f"Predicted Optimotion Femur Used with GBR: {predicted_femur_gbr:.1f}")
+        st.write(f"Predicted Optimotion Tibia with XGB: {predicted_tibia_xgb:.1f}")
+        st.write(f"Predicted Optimotion Tibia with GBR: {predicted_tibia_gbr:.1f}")
+        st.write(f"Predicted Optimotion Femur with XGB: {predicted_femur_xgb:.1f}")
+        st.write(f"Predicted Optimotion Femur with GBR: {predicted_femur_gbr:.1f}")
 
         if model_type == "xgb" and predicted_femur_xgb > 8.5:
             st.error("Predict size 9 femur", icon="🚨")
@@ -168,8 +168,7 @@ class TibiaFemurPredictor:
             'mse': mean_squared_error(y, preds),
             'mae': mae,
             'mape': np.mean(np.abs((y - preds) / y)) * 100,
-            'kurtosis': residuals_kurtosis,
-            'residuals': residuals
+            'kurtosis': residuals_kurtosis
         }
 
         return metrics
@@ -184,7 +183,7 @@ class TibiaFemurPredictor:
         }
 
         df_metrics = pd.DataFrame(metrics_data)
-        df_metrics = df_metrics.round(1)
+        df_metrics = df_metrics.round(3)  # Displaying metrics with three decimal places for better precision
         st.table(df_metrics)
 
     def evaluate_models(self):
