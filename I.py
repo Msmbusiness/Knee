@@ -11,13 +11,15 @@ import matplotlib.pyplot as plt
 from scipy.stats import kurtosis
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
+import requests
+from io import StringIO
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 warnings.filterwarnings("ignore", message=".*test scores are non-finite.*", category=UserWarning, module='sklearn.model_selection._search')
 
 # Streamlit app title
-st.title("Tibia Femur Predictor")
+st.title("Total Knee Size Predictor")
 
 # Dictionary for femur sizes
 femur_sizes = {
@@ -32,8 +34,10 @@ femur_sizes = {
 }
 
 @st.cache_data(show_spinner=False)
-def load_data(file):
-    data = pd.read_csv(file)
+def load_data_from_url(url):
+    response = requests.get(url)
+    response.raise_for_status()
+    data = pd.read_csv(StringIO(response.text))
     data.columns = data.columns.str.strip()
     data['age_height_interaction'] = data['age'] * data['height']
     data['height_log'] = np.log1p(data['height'])
@@ -111,41 +115,41 @@ class TibiaFemurPredictor:
         if not self.models:
             st.error("Models are not trained yet.")
             return
-    
+
         X_new = np.array([[np.log1p(height), age * height, sex]])
         tibia_scaler = self.models['tibia']['scaler']
         femur_scaler = self.models['femur']['scaler']
         X_new_scaled_tibia = tibia_scaler.transform(X_new)
         X_new_scaled_femur = femur_scaler.transform(X_new)
-    
+
         preds_tibia_xgb = self.models['tibia']['xgb'].predict(X_new_scaled_tibia)
         preds_tibia_gbr = self.models['tibia']['gbr'].predict(X_new_scaled_tibia)
         preds_femur_xgb = self.models['femur']['xgb'].predict(X_new_scaled_femur)
         preds_femur_gbr = self.models['femur']['gbr'].predict(X_new_scaled_femur)
-    
+
         predicted_tibia_xgb = round(preds_tibia_xgb[0], 1)
         predicted_tibia_gbr = round(preds_tibia_gbr[0], 1)
         predicted_femur_xgb = round(preds_femur_xgb[0], 1)
         predicted_femur_gbr = round(preds_femur_gbr[0], 1)
-    
+
         st.write(f"Predicted Optimotion Tibia with XGB: {predicted_tibia_xgb:.1f}")
         st.write(f"Predicted Optimotion Tibia with GBR: {predicted_tibia_gbr:.1f}")
         st.write(f"Predicted Optimotion Femur with XGB: {predicted_femur_xgb:.1f}")
         st.write(f"Predicted Optimotion Femur with GBR: {predicted_femur_gbr:.1f}")
-    
+
         if model_type == "xgb" and predicted_femur_xgb > 8.5:
             st.error("Predict size 9 femur", icon="🚨")
-    
+
         femur_df = pd.DataFrame(femur_sizes).T
         femur_df.columns = ["A", "B"]
         femur_df = femur_df.round(1)
         femur_df.index.name = "Size"
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
-    
+
         def highlight_row(s):
             return ['background-color: yellow' if s['Size'] == int(predicted_femur_xgb) else '' for _ in s.index]
-    
+
         st.table(femur_df.style.apply(highlight_row, axis=1))
 
     def calculate_metrics(self, X, y, bone, model_type):
@@ -163,7 +167,8 @@ class TibiaFemurPredictor:
             'mse': mean_squared_error(y, preds),
             'mae': mae,
             'mape': np.mean(np.abs((y - preds) / y)) * 100,
-            'kurtosis': residuals_kurtosis
+            'kurtosis': residuals_kurtosis,
+            'residuals': residuals
         }
 
         return metrics
@@ -171,14 +176,45 @@ class TibiaFemurPredictor:
     def display_interactive_table(self, tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr):
         metrics_data = {
             'Metric': ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis'],
-            'Tibia XGB': [round(tibia_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Tibia GBR': [round(tibia_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur XGB': [round(femur_metrics_xgb[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur GBR': [round(femur_metrics_gbr[key], 1) for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
+            'Tibia XGB': [tibia_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Tibia GBR': [tibia_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur XGB': [femur_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
+            'Femur GBR': [femur_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
         }
 
         df_metrics = pd.DataFrame(metrics_data)
         st.table(df_metrics)
+
+    def plot_residuals_histogram(self, X_tibia_scaled, y_tibia, X_femur_scaled, y_femur):
+        tibia_residuals_xgb = y_tibia - self.models['tibia']['xgb'].predict(X_tibia_scaled)
+        tibia_residuals_gbr = y_tibia - self.models['tibia']['gbr'].predict(X_tibia_scaled)
+        femur_residuals_xgb = y_femur - self.models['femur']['xgb'].predict(X_femur_scaled)
+        femur_residuals_gbr = y_femur - self.models['femur']['gbr'].predict(X_femur_scaled)
+
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+        axes[0, 0].hist(tibia_residuals_xgb, bins=20, color='blue', alpha=0.7)
+        axes[0, 0].set_title("Residuals Histogram (XGB) - Tibia")
+        axes[0, 0].set_xlabel("Residuals")
+        axes[0, 0].set_ylabel("Frequency")
+
+        axes[0, 1].hist(tibia_residuals_gbr, bins=20, color='green', alpha=0.7)
+        axes[0, 1].set_title("Residuals Histogram (GBR) - Tibia")
+        axes[0, 1].set_xlabel("Residuals")
+        axes[0, 1].set_ylabel("Frequency")
+
+        axes[1, 0].hist(femur_residuals_xgb, bins=20, color='blue', alpha=0.7)
+        axes[1, 0].set_title("Residuals Histogram (XGB) - Femur")
+        axes[1, 0].set_xlabel("Residuals")
+        axes[1, 0].set_ylabel("Frequency")
+
+        axes[1, 1].hist(femur_residuals_gbr, bins=20, color='green', alpha=0.7)
+        axes[1, 1].set_title("Residuals Histogram (GBR) - Femur")
+        axes[1, 1].set_xlabel("Residuals")
+        axes[1, 1].set_ylabel("Frequency")
+
+        plt.tight_layout()
+        st.pyplot(fig)
 
     def evaluate_models(self):
         features = ['height_log', 'age_height_interaction', 'sex']
@@ -197,13 +233,24 @@ class TibiaFemurPredictor:
 
         self.display_interactive_table(tibia_metrics_xgb, tibia_metrics_gbr, femur_metrics_xgb, femur_metrics_gbr)
 
+        # Plot histograms of residuals
+        self.plot_residuals_histogram(X_tibia_scaled, y_tibia, X_femur_scaled, y_femur)
+
 def main():
     predictor = TibiaFemurPredictor()
 
-    uploaded_file = st.file_uploader("Upload Data File", type="csv")
-    if uploaded_file is not None:
-        predictor.data = load_data(uploaded_file)
-        st.success("Data file loaded successfully.")
+    # Dictionary of available CSV files and their URLs
+    csv_files = {
+        "Data Central Florida": "https://raw.githubusercontent.com/Msmbusiness/Knee/main/data%20central%20florida.csv",
+        "Data Midwest": "https://raw.githubusercontent.com/Msmbusiness/Knee/main/data%20midwest.csv"
+    }
+
+    default_file = "Data Central Florida"
+    selected_file = st.selectbox("Select a CSV file", list(csv_files.keys()), index=list(csv_files.keys()).index(default_file))
+    if selected_file:
+        file_url = csv_files[selected_file]
+        predictor.data = load_data_from_url(file_url)
+        st.success(f"Data file '{selected_file}' loaded successfully.")
 
         if st.button("Train Models"):
             predictor.train_models()
@@ -231,5 +278,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
