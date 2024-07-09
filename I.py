@@ -105,9 +105,9 @@ class TibiaFemurPredictor:
 
         fig, axes = plt.subplots(1, 2, figsize=(20, 8))
         self.plot_learning_curve(self.models['tibia']['xgb'], "Tibia XGB", X, y_tibia, axes[0], 'blue')
-        self.plot_learning_curve(self.models['tibia']['gbr'], "Tibia GBR", X, y_tibia, axes[0], 'green')
+        self.plot_learning_curve(self.models['tibia']['gbr'], "Tibia GBR", X, y_tibia, axes[0], 'red')
         self.plot_learning_curve(self.models['femur']['xgb'], "Femur XGB", X, y_femur, axes[1], 'blue')
-        self.plot_learning_curve(self.models['femur']['gbr'], "Femur GBR", X, y_femur, axes[1], 'green')
+        self.plot_learning_curve(self.models['femur']['gbr'], "Femur GBR", X, y_femur, axes[1], 'red')
 
         st.pyplot(fig)
 
@@ -132,25 +132,42 @@ class TibiaFemurPredictor:
         predicted_femur_xgb = round(preds_femur_xgb[0], 1)
         predicted_femur_gbr = round(preds_femur_gbr[0], 1)
 
-        st.write(f"Predicted Optimotion Tibia with XGB: {predicted_tibia_xgb:.1f}")
-        st.write(f"Predicted Optimotion Tibia with GBR: {predicted_tibia_gbr:.1f}")
-        st.write(f"Predicted Optimotion Femur with XGB: {predicted_femur_xgb:.1f}")
-        st.write(f"Predicted Optimotion Femur with GBR: {predicted_femur_gbr:.1f}")
+        # Ensemble prediction as the average of XGB and GBR predictions
+        predicted_tibia_ensemble = round((preds_tibia_xgb[0] + preds_tibia_gbr[0]) / 2, 1)
+        predicted_femur_ensemble = round((preds_femur_xgb[0] + preds_femur_gbr[0]) / 2, 1)
+
+        prediction_data = {
+            "Model": ["XGB", "GBR", "Ensemble"],
+            "Predicted Femur": [predicted_femur_xgb, predicted_femur_gbr, predicted_femur_ensemble],
+            "Predicted Tibia": [predicted_tibia_xgb, predicted_tibia_gbr, predicted_tibia_ensemble]
+        }
+
+        prediction_df = pd.DataFrame(prediction_data)
+        # Ensure all values are displayed with one decimal place
+        prediction_df["Predicted Femur"] = prediction_df["Predicted Femur"].map('{:.1f}'.format)
+        prediction_df["Predicted Tibia"] = prediction_df["Predicted Tibia"].map('{:.1f}'.format)
+        
+        st.table(prediction_df)
 
         if model_type == "xgb" and predicted_femur_xgb > 8.5:
             st.error("Predict size 9 femur", icon="🚨")
 
         femur_df = pd.DataFrame(femur_sizes).T
         femur_df.columns = ["A", "B"]
-        femur_df = femur_df.round(1)
         femur_df.index.name = "Size"
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
+
+        # Format the DataFrame to ensure all values are displayed with one decimal place
+        femur_df["A"] = femur_df["A"].map('{:.1f}'.format)
+        femur_df["B"] = femur_df["B"].map('{:.1f}'.format)
 
         def highlight_row(s):
             return ['background-color: yellow' if s['Size'] == int(predicted_femur_xgb) else '' for _ in s.index]
 
         st.table(femur_df.style.apply(highlight_row, axis=1))
+
+
 
     def calculate_metrics(self, X, y, bone, model_type):
         model = self.models[bone][model_type]
