@@ -5,7 +5,6 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error
-from sklearn.model_selection import learning_curve
 from sklearn.exceptions import UndefinedMetricWarning
 import matplotlib.pyplot as plt
 import warnings
@@ -13,7 +12,6 @@ import requests
 from io import StringIO
 import tempfile
 from fpdf import FPDF
-import scipy.stats as stats
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -71,6 +69,7 @@ class TibiaFemurPredictor:
 
     def train_models(self):
         self.models = train_and_scale_models(self.data, ['height_log', 'age_height_interaction', 'sex'])
+        st.session_state['models'] = self.models
         st.success("Models trained and scalers initialized.")
 
     def predict(self, age, height, sex_val):
@@ -104,20 +103,23 @@ class TibiaFemurPredictor:
 
         prediction_df = pd.DataFrame(prediction_data)
         self.prediction_df = prediction_df
+        st.session_state['prediction_df'] = prediction_df
 
-        st.table(prediction_df)
+    def display_prediction(self):
+        if self.prediction_df is not None:
+            st.table(self.prediction_df)
 
-        # Highlight the row based on the rounded value of the GBR predicted femur size
-        femur_df = pd.DataFrame(femur_sizes).T
-        femur_df.columns = ["A", "B"]
-        femur_df.index.name = "Size"
-        femur_df.index = femur_df.index.astype(int)
-        femur_df = femur_df.reset_index()
+            # Highlight the row based on the rounded value of the GBR predicted femur size
+            femur_df = pd.DataFrame(femur_sizes).T
+            femur_df.columns = ["A", "B"]
+            femur_df.index.name = "Size"
+            femur_df.index = femur_df.index.astype(int)
+            femur_df = femur_df.reset_index()
 
-        def highlight_row(s):
-            return ['background-color: yellow' if s['Size'] == round(pred_femur) else '' for _ in s.index]
+            def highlight_row(s):
+                return ['background-color: yellow' if s['Size'] == round(self.prediction_df.loc[0, "Predicted Femur"]) else '' for _ in s.index]
 
-        st.table(femur_df.style.apply(highlight_row, axis=1))
+            st.table(femur_df.style.apply(highlight_row, axis=1))
 
     def save_outputs_to_pdf(self):
         pdf = FPDF()
@@ -160,7 +162,8 @@ def main():
         if st.button("Train Models"):
             predictor.train_models()
 
-        if predictor.models:
+        if 'models' in st.session_state:
+            predictor.models = st.session_state['models']
             age = st.slider("Age:", min_value=55, max_value=85, value=65)
             height = st.slider("Height (inches):", min_value=60, max_value=76, value=65)
             sex = st.selectbox("Sex:", ["Female", "Male"])
@@ -168,6 +171,7 @@ def main():
 
             if st.button("Predict"):
                 predictor.predict(age, height, sex_val)
+                predictor.display_prediction()
 
             if st.button("Save Outputs to PDF"):
                 predictor.save_outputs_to_pdf()
