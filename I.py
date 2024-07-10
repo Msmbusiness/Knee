@@ -18,6 +18,8 @@ import warnings
 from sklearn.exceptions import UndefinedMetricWarning
 import requests
 from io import StringIO
+import tempfile
+from fpdf import FPDF
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -43,7 +45,7 @@ def load_data_from_url(url):
     response = requests.get(url)
     response.raise_for_status()
     data = pd.read_csv(StringIO(response.text))
-    data.columns = data.columns.str.strip()
+    data.columns = data.columns.str.strip().str.lower()  # Ensure columns are in lower case without spaces
     data['age_height_interaction'] = data['age'] * data['height']
     data['height_log'] = np.log1p(data['height'])
     return data
@@ -89,8 +91,16 @@ class TibiaFemurPredictor:
     def __init__(self):
         self.models = None
         self.data = None
+        self.prediction_df = None
+        self.metrics_df = None
+        self.height_vs_pred_fig = None
+        self.learning_curve_fig = None
+        self.qq_plot_fig = None
 
     def oversample_minority_group(self, data):
+        if 'sex' not in data.columns:
+            st.error("The dataset does not contain the required 'sex' column.")
+            return data
         if 0 in data['sex'].values and 1 in data['sex'].values:
             X = data.drop('sex', axis=1)
             y = data['sex']
@@ -124,16 +134,17 @@ class TibiaFemurPredictor:
         y_tibia = self.data['tibia used'].values
         y_femur = self.data['femur used'].values
 
-        fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+        fig, axes = plt.subplots(4, 2, figsize=(20, 16))
         self.plot_learning_curve(self.models['tibia']['xgb'], "Tibia XGB", X, y_tibia, axes[0, 0], 'blue')
         self.plot_learning_curve(self.models['tibia']['gbr'], "Tibia GBR", X, y_tibia, axes[0, 1], 'red')
         self.plot_learning_curve(self.models['tibia']['ridge'], "Tibia Ridge", X, y_tibia, axes[1, 0], 'green')
         self.plot_learning_curve(self.models['tibia']['stack'], "Tibia Stack", X, y_tibia, axes[1, 1], 'purple')
-        self.plot_learning_curve(self.models['femur']['xgb'], "Femur XGB", X, y_femur, axes[1, 0], 'blue')
-        self.plot_learning_curve(self.models['femur']['gbr'], "Femur GBR", X, y_femur, axes[1, 1], 'red')
-        self.plot_learning_curve(self.models['femur']['ridge'], "Femur Ridge", X, y_femur, axes[2, 0], 'green')
-        self.plot_learning_curve(self.models['femur']['stack'], "Femur Stack", X, y_femur, axes[2, 1], 'purple')
+        self.plot_learning_curve(self.models['femur']['xgb'], "Femur XGB", X, y_femur, axes[2, 0], 'blue')
+        self.plot_learning_curve(self.models['femur']['gbr'], "Femur GBR", X, y_femur, axes[2, 1], 'red')
+        self.plot_learning_curve(self.models['femur']['ridge'], "Femur Ridge", X, y_femur, axes[3, 0], 'green')
+        self.plot_learning_curve(self.models['femur']['stack'], "Femur Stack", X, y_femur, axes[3, 1], 'purple')
 
+        self.learning_curve_fig = fig
         st.pyplot(fig)
 
     def predict(self, age, height, sex_val, model_type):
@@ -156,13 +167,25 @@ class TibiaFemurPredictor:
         preds_femur_ridge = self.models['femur']['ridge'].predict(X_new_scaled_femur)
         preds_femur_stack = self.models['femur']['stack'].predict(X_new_scaled_femur)
 
+        # Linear regression line prediction for GBR model
+        heights = np.linspace(60, 76, 100)
+        tibia_pred_gbr = [self.models['tibia']['gbr'].predict(tibia_scaler.transform(np.array([[np.log1p(h), age * h, sex_val]])))[0] for h in heights]
+        femur_pred_gbr = [self.models['femur']['gbr'].predict(femur_scaler.transform(np.array([[np.log1p(h), age * h, sex_val]])))[0] for h in heights]
+
+        tibia_reg = LinearRegression().fit(heights.reshape(-1, 1), tibia_pred_gbr)
+        femur_reg = LinearRegression().fit(heights.reshape(-1, 1), femur_pred_gbr)
+
+        tibia_reg_pred = tibia_reg.predict(np.array([[height]]))[0]
+        femur_reg_pred = femur_reg.predict(np.array([[height]]))[0]
+
         prediction_data = {
-            "Model": ["XGB", "GBR", "Ridge", "Stack"],
-            "Predicted Femur": [round(preds_femur_xgb[0], 1), round(preds_femur_gbr[0], 1), round(preds_femur_ridge[0], 1), round(preds_femur_stack[0], 1)],
-            "Predicted Tibia": [round(preds_tibia_xgb[0], 1), round(preds_tibia_gbr[0], 1), round(preds_tibia_ridge[0], 1), round(preds_tibia_stack[0], 1)]
+            "Model": ["XGB", "GBR", "GBR with Reg Line", "Ridge", "Stack"],
+            "Predicted Femur": [round(preds_femur_xgb[0], 1), round(preds_femur_gbr[0], 1), round(femur_reg_pred, 1), round(preds_femur_ridge[0], 1), round(preds_femur_stack[0], 1)],
+            "Predicted Tibia": [round(preds_tibia_xgb[0], 1), round(preds_tibia_gbr[0], 1), round(tibia_reg_pred, 1), round(preds_tibia_ridge[0], 1), round(preds_tibia_stack[0], 1)]
         }
 
         prediction_df = pd.DataFrame(prediction_data)
+        self.prediction_df = prediction_df
 
         st.table(prediction_df)
 
@@ -215,6 +238,8 @@ class TibiaFemurPredictor:
         ax.set_ylabel('Predicted Size')
         ax.set_title(f'Height vs Predicted Size with Regression Line ({"Female" if sex_val == 0 else "Male"})')
         ax.legend()
+
+        self.height_vs_pred_fig = fig
         st.pyplot(fig)
 
     def plot_height_vs_predicted_size(self, sex_val, age):
@@ -327,6 +352,8 @@ class TibiaFemurPredictor:
         ax.set_ylabel('Predicted Size')
         ax.set_title(f'Height vs Predicted Size ({"Female" if sex_val == 0 else "Male"})')
         ax.legend()
+
+        self.height_vs_pred_fig = fig
         st.pyplot(fig)
 
     def calculate_metrics(self, X, y, bone, model_type):
@@ -364,6 +391,8 @@ class TibiaFemurPredictor:
         }
 
         df_metrics = pd.DataFrame(metrics_data)
+        self.metrics_df = df_metrics
+
         st.table(df_metrics)
 
     def evaluate_models(self):
@@ -416,6 +445,7 @@ class TibiaFemurPredictor:
             stats.probplot(res, dist="norm", plot=ax)
             ax.set_title(key.replace('_', ' ').title())
 
+        self.qq_plot_fig = fig
         st.pyplot(fig)
 
     def calculate_residual_tests(self):
@@ -469,6 +499,62 @@ class TibiaFemurPredictor:
         df_residual_tests = pd.DataFrame(residual_tests_data)
         st.table(df_residual_tests)
 
+    def save_outputs_to_pdf(self):
+        pdf = FPDF()
+        pdf.add_page()
+
+        # Title
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt="Total Knee Size Predictor Results", ln=True, align="C")
+
+        # Prediction Table
+        if self.prediction_df is not None:
+            pdf.set_font("Arial", size=10)
+            pdf.cell(200, 10, txt="Predictions", ln=True, align="L")
+            pdf.set_font("Arial", size=8)
+            for i in range(len(self.prediction_df)):
+                row = self.prediction_df.iloc[i]
+                pdf.cell(200, 10, txt=str(row.values), ln=True, align="L")
+
+        # Metrics Table
+        if self.metrics_df is not None:
+            pdf.add_page()
+            pdf.set_font("Arial", size=10)
+            pdf.cell(200, 10, txt="Metrics", ln=True, align="L")
+            pdf.set_font("Arial", size=8)
+            for i in range(len(self.metrics_df)):
+                row = self.metrics_df.iloc[i]
+                pdf.cell(200, 10, txt=str(row.values), ln=True, align="L")
+
+        # Height vs Predicted Size Plot
+        if self.height_vs_pred_fig is not None:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                self.height_vs_pred_fig.savefig(tmpfile.name, format='png')
+                pdf.add_page()
+                pdf.image(tmpfile.name, x=10, y=10, w=190)
+                tmpfile.close()
+
+        # Learning Curves Plot
+        if self.learning_curve_fig is not None:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                self.learning_curve_fig.savefig(tmpfile.name, format='png')
+                pdf.add_page()
+                pdf.image(tmpfile.name, x=10, y=10, w=190)
+                tmpfile.close()
+
+        # QQ Plots
+        if self.qq_plot_fig is not None:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                self.qq_plot_fig.savefig(tmpfile.name, format='png')
+                pdf.add_page()
+                pdf.image(tmpfile.name, x=10, y=10, w=190)
+                tmpfile.close()
+
+        pdf_output = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        pdf.output(pdf_output.name)
+        st.success("PDF saved successfully!")
+        st.download_button("Download PDF", data=open(pdf_output.name, "rb").read(), file_name="output.pdf")
+
 def main():
     predictor = TibiaFemurPredictor()
 
@@ -516,9 +602,13 @@ def main():
             if st.button("Fit Models with Regression Line"):
                 predictor.fit_regression_line(sex_val, age)
 
+            if st.button("Save Outputs to PDF"):
+                predictor.save_outputs_to_pdf()
+
     st.write("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
     """)
 
 if __name__ == "__main__":
     main()
+
