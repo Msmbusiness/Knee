@@ -2,9 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error
 from sklearn.exceptions import UndefinedMetricWarning
 import matplotlib.pyplot as plt
 import warnings
@@ -81,24 +79,13 @@ class TibiaFemurPredictor:
         scaler = self.models['tibia']['scaler']
         X_new_scaled = scaler.transform(X_new)
         
-        pred_tibia = self.models['tibia']['gbr'].predict(X_new_scaled)[0]
-        pred_femur = self.models['femur']['gbr'].predict(X_new_scaled)[0]
-
-        # Linear regression line prediction for GBR model
-        heights = np.linspace(60, 76, 100)
-        tibia_pred_gbr = [self.models['tibia']['gbr'].predict(scaler.transform(np.array([[np.log1p(h), age * h, sex_val]])))[0] for h in heights]
-        femur_pred_gbr = [self.models['femur']['gbr'].predict(scaler.transform(np.array([[np.log1p(h), age * h, sex_val]])))[0] for h in heights]
-
-        tibia_reg = LinearRegression().fit(heights.reshape(-1, 1), tibia_pred_gbr)
-        femur_reg = LinearRegression().fit(heights.reshape(-1, 1), femur_pred_gbr)
-
-        tibia_reg_pred = tibia_reg.predict(np.array([[height]]))[0]
-        femur_reg_pred = femur_reg.predict(np.array([[height]]))[0]
+        pred_tibia = round(self.models['tibia']['gbr'].predict(X_new_scaled)[0], 1)
+        pred_femur = round(self.models['femur']['gbr'].predict(X_new_scaled)[0], 1)
 
         prediction_data = {
-            "Model": ["GBR", "GBR with Reg Line"],
-            "Predicted Femur": [round(pred_femur, 1), round(femur_reg_pred, 1)],
-            "Predicted Tibia": [round(pred_tibia, 1), round(tibia_reg_pred, 1)]
+            "Model": ["GBR"],
+            "Predicted Femur": [pred_femur],
+            "Predicted Tibia": [pred_tibia]
         }
 
         prediction_df = pd.DataFrame(prediction_data)
@@ -107,7 +94,7 @@ class TibiaFemurPredictor:
 
     def display_prediction(self):
         if self.prediction_df is not None:
-            st.table(self.prediction_df)
+            st.table(self.prediction_df.style.format(precision=1))
 
             # Highlight the row based on the rounded value of the GBR predicted femur size
             femur_df = pd.DataFrame(femur_sizes).T
@@ -119,7 +106,7 @@ class TibiaFemurPredictor:
             def highlight_row(s):
                 return ['background-color: yellow' if s['Size'] == round(self.prediction_df.loc[0, "Predicted Femur"]) else '' for _ in s.index]
 
-            st.table(femur_df.style.apply(highlight_row, axis=1))
+            st.table(femur_df.style.apply(highlight_row, axis=1).format(precision=1))
 
     def save_outputs_to_pdf(self):
         pdf = FPDF()
