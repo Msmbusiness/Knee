@@ -82,4 +82,4 @@ watchdog==4.0.1
 Werkzeug==3.0.3
 wheel==0.43.0
 xgboost==2.1.0
-
+fpdf==1.7.2
