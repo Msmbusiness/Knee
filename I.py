@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
@@ -52,13 +53,17 @@ def train_and_scale_models(data, features):
     
     gbr_tibia = GradientBoostingRegressor(n_estimators=100, random_state=1)
     gbr_femur = GradientBoostingRegressor(n_estimators=100, random_state=1)
+    xgb_tibia = XGBRegressor(n_estimators=100, random_state=1)
+    xgb_femur = XGBRegressor(n_estimators=100, random_state=1)
     
     gbr_tibia.fit(X_scaled, y_tibia)
     gbr_femur.fit(X_scaled, y_femur)
+    xgb_tibia.fit(X_scaled, y_tibia)
+    xgb_femur.fit(X_scaled, y_femur)
     
     return {
-        'tibia': {'gbr': gbr_tibia, 'scaler': scaler},
-        'femur': {'gbr': gbr_femur, 'scaler': scaler}
+        'tibia': {'gbr': gbr_tibia, 'xgb': xgb_tibia, 'scaler': scaler},
+        'femur': {'gbr': gbr_femur, 'xgb': xgb_femur, 'scaler': scaler}
     }
 
 class TibiaFemurPredictor:
@@ -81,8 +86,10 @@ class TibiaFemurPredictor:
         scaler = self.models['tibia']['scaler']
         X_new_scaled = scaler.transform(X_new)
         
-        pred_tibia = self.models['tibia']['gbr'].predict(X_new_scaled)[0]
-        pred_femur = self.models['femur']['gbr'].predict(X_new_scaled)[0]
+        pred_tibia_gbr = self.models['tibia']['gbr'].predict(X_new_scaled)[0]
+        pred_femur_gbr = self.models['femur']['gbr'].predict(X_new_scaled)[0]
+        pred_tibia_xgb = self.models['tibia']['xgb'].predict(X_new_scaled)[0]
+        pred_femur_xgb = self.models['femur']['xgb'].predict(X_new_scaled)[0]
 
         # Linear regression line prediction for GBR model
         heights = np.linspace(60, 76, 100)
@@ -96,9 +103,9 @@ class TibiaFemurPredictor:
         femur_reg_pred = femur_reg.predict(np.array([[height]]))[0]
 
         prediction_data = {
-            "Model": ["GBR", "GBR with Reg Line"],
-            "Predicted Femur": [round(pred_femur, 1), round(femur_reg_pred, 1)],
-            "Predicted Tibia": [round(pred_tibia, 1), round(tibia_reg_pred, 1)]
+            "Model": ["GBR", "GBR with Reg Line", "XGB"],
+            "Predicted Femur": [round(pred_femur_gbr, 1), round(femur_reg_pred, 1), round(pred_femur_xgb, 1)],
+            "Predicted Tibia": [round(pred_tibia_gbr, 1), round(tibia_reg_pred, 1), round(pred_tibia_xgb, 1)]
         }
 
         prediction_df = pd.DataFrame(prediction_data)
