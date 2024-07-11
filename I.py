@@ -136,34 +136,43 @@ class TibiaFemurPredictor:
         femur_preds_xgb = self.models['femur']['xgb'].predict(X_new_scaled_femur)
         femur_preds_gbr = self.models['femur']['gbr'].predict(X_new_scaled_femur)
 
+        # Round predictions to 1 decimal point
+        tibia_preds_xgb = round(tibia_preds_xgb[0], 1)
+        tibia_preds_gbr = round(tibia_preds_gbr[0], 1)
+        femur_preds_xgb = round(femur_preds_xgb[0], 1)
+        femur_preds_gbr = round(femur_preds_gbr[0], 1)
+
+        # Average predictions
+        tibia_avg_pred = round(np.mean([tibia_preds_xgb, tibia_preds_gbr]), 1)
+        femur_avg_pred = round(np.mean([femur_preds_xgb, femur_preds_gbr]), 1)
+
         prediction_data = {
-            "Model": ["XGB", "GBR"],
-            "Predicted Femur": [round(femur_preds_xgb[0], 1), round(femur_preds_gbr[0], 1)],
-            "Predicted Tibia": [round(tibia_preds_xgb[0], 1), round(tibia_preds_gbr[0], 1)]
+            "Model": ["XGB", "GBR", "Average"],
+            "Predicted Femur": [femur_preds_xgb, femur_preds_gbr, femur_avg_pred],
+            "Predicted Tibia": [tibia_preds_xgb, tibia_preds_gbr, tibia_avg_pred]
         }
 
         prediction_df = pd.DataFrame(prediction_data)
-        self.prediction_df = prediction_df
+        st.table(prediction_df.style.format(precision=1))
 
-        st.table(prediction_df)
-
-        avg_femur_pred = round(np.mean([femur_preds_xgb[0], femur_preds_gbr[0]]))
+        avg_femur_pred = round(np.mean([femur_preds_xgb, femur_preds_gbr]), 1)
         femur_df = pd.DataFrame(femur_sizes).T
         femur_df.columns = ["A", "B"]
         femur_df.index.name = "Size"
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
 
-        def highlight_row(s):
+        def highlight_size_row(s):
             return ['background-color: yellow' if s['Size'] == avg_femur_pred else '' for _ in s.index]
 
-        st.table(femur_df.style.apply(highlight_row, axis=1))
+        st.table(femur_df.style.apply(highlight_size_row, axis=1).format("{:.1f}", subset=["A", "B"]))
+
     def plot_height_vs_bone_size(self):
         heights = np.arange(60, 76, 1)
-        tibia_preds_male = {'xgb': [], 'gbr': []}
-        femur_preds_male = {'xgb': [], 'gbr': []}
-        tibia_preds_female = {'xgb': [], 'gbr': []}
-        femur_preds_female = {'xgb': [], 'gbr': []}
+        tibia_preds_male = {'xgb': [], 'gbr': [], 'avg': []}
+        femur_preds_male = {'xgb': [], 'gbr': [], 'avg': []}
+        tibia_preds_female = {'xgb': [], 'gbr': [], 'avg': []}
+        femur_preds_female = {'xgb': [], 'gbr': [], 'avg': []}
 
         for height in heights:
             for sex_val, tibia_preds, femur_preds in zip([1, 0], [tibia_preds_male, tibia_preds_female], [femur_preds_male, femur_preds_female]):
@@ -171,16 +180,25 @@ class TibiaFemurPredictor:
                 X_new_scaled_tibia = self.models['tibia']['scaler'].transform(X_new)
                 X_new_scaled_femur = self.models['femur']['scaler'].transform(X_new)
 
-                tibia_preds['xgb'].append(self.models['tibia']['xgb'].predict(X_new_scaled_tibia)[0])
-                tibia_preds['gbr'].append(self.models['tibia']['gbr'].predict(X_new_scaled_tibia)[0])
-                femur_preds['xgb'].append(self.models['femur']['xgb'].predict(X_new_scaled_femur)[0])
-                femur_preds['gbr'].append(self.models['femur']['gbr'].predict(X_new_scaled_femur)[0])
+                tibia_pred_xgb = self.models['tibia']['xgb'].predict(X_new_scaled_tibia)[0]
+                tibia_pred_gbr = self.models['tibia']['gbr'].predict(X_new_scaled_tibia)[0]
+                femur_pred_xgb = self.models['femur']['xgb'].predict(X_new_scaled_femur)[0]
+                femur_pred_gbr = self.models['femur']['gbr'].predict(X_new_scaled_femur)[0]
+
+                tibia_preds['xgb'].append(tibia_pred_xgb)
+                tibia_preds['gbr'].append(tibia_pred_gbr)
+                tibia_preds['avg'].append(np.mean([tibia_pred_xgb, tibia_pred_gbr]))
+                femur_preds['xgb'].append(femur_pred_xgb)
+                femur_preds['gbr'].append(femur_pred_gbr)
+                femur_preds['avg'].append(np.mean([femur_pred_xgb, femur_pred_gbr]))
 
         fig, ax = plt.subplots(figsize=(10, 6))
         show_tibia_xgb = st.checkbox('Tibia XGB', value=True)
         show_tibia_gbr = st.checkbox('Tibia GBR', value=True)
+        show_tibia_avg = st.checkbox('Tibia Average', value=True)
         show_femur_xgb = st.checkbox('Femur XGB', value=True)
         show_femur_gbr = st.checkbox('Femur GBR', value=True)
+        show_femur_avg = st.checkbox('Femur Average', value=True)
 
         if show_tibia_xgb:
             ax.plot(heights, tibia_preds_male['xgb'], label='Tibia XGB (Males)', color='blue', linestyle='--')
@@ -188,12 +206,18 @@ class TibiaFemurPredictor:
         if show_tibia_gbr:
             ax.plot(heights, tibia_preds_male['gbr'], label='Tibia GBR (Males)', color='green', linestyle='--')
             ax.plot(heights, tibia_preds_female['gbr'], label='Tibia GBR (Females)', color='green')
+        if show_tibia_avg:
+            ax.plot(heights, tibia_preds_male['avg'], label='Tibia Average (Males)', color='cyan', linestyle='--')
+            ax.plot(heights, tibia_preds_female['avg'], label='Tibia Average (Females)', color='cyan')
         if show_femur_xgb:
             ax.plot(heights, femur_preds_male['xgb'], label='Femur XGB (Males)', color='red', linestyle='--')
             ax.plot(heights, femur_preds_female['xgb'], label='Femur XGB (Females)', color='red')
         if show_femur_gbr:
             ax.plot(heights, femur_preds_male['gbr'], label='Femur GBR (Males)', color='purple', linestyle='--')
             ax.plot(heights, femur_preds_female['gbr'], label='Femur GBR (Females)', color='purple')
+        if show_femur_avg:
+            ax.plot(heights, femur_preds_male['avg'], label='Femur Average (Males)', color='orange', linestyle='--')
+            ax.plot(heights, femur_preds_female['avg'], label='Femur Average (Females)', color='orange')
 
         ax.set_xlabel('Height (inches)')
         ax.set_ylabel('Predicted Size')
@@ -211,8 +235,8 @@ class TibiaFemurPredictor:
             X_new_scaled_tibia = self.models['tibia']['scaler'].transform(X_new)
             X_new_scaled_femur = self.models['femur']['scaler'].transform(X_new)
 
-            tibia_pred = self.models['tibia']['gbr'].predict(X_new_scaled_tibia)[0]
-            femur_pred = self.models['femur']['gbr'].predict(X_new_scaled_femur)[0]
+            tibia_pred = np.mean([self.models['tibia']['xgb'].predict(X_new_scaled_tibia)[0], self.models['tibia']['gbr'].predict(X_new_scaled_tibia)[0]])
+            femur_pred = np.mean([self.models['femur']['xgb'].predict(X_new_scaled_femur)[0], self.models['femur']['gbr'].predict(X_new_scaled_femur)[0]])
             odds_ratio = femur_pred - tibia_pred
             odds_ratios.append(odds_ratio)
 
@@ -247,12 +271,18 @@ class TibiaFemurPredictor:
             'kurtosis': []
         }
 
-        model_types = ['xgb', 'gbr']
+        model_types = ['xgb', 'gbr', 'avg']
         bones = ['tibia', 'femur']
 
         for model_type in model_types:
             for bone in bones:
-                preds = self.models[bone][model_type].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+                if model_type == 'avg':
+                    preds = np.mean([
+                        self.models[bone]['xgb'].predict(self.models[bone]['scaler'].transform(self.data[features].values)),
+                        self.models[bone]['gbr'].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+                    ], axis=0)
+                else:
+                    preds = self.models[bone][model_type].predict(self.models[bone]['scaler'].transform(self.data[features].values))
                 y_true = self.data[f'{bone} used'].values
                 metrics['r2_score'].append(r2_score(y_true, preds))
                 metrics['adjusted_r2_score'].append(1 - (1 - r2_score(y_true, preds)) * (len(y_true) - 1) / (len(y_true) - X_tibia.shape[1] - 1))
@@ -267,7 +297,13 @@ class TibiaFemurPredictor:
         fig, axes = plt.subplots(2, 2, figsize=(12, 8))
         for i, (bone, ax) in enumerate(zip(bones, axes.flatten())):
             for j, model_type in enumerate(model_types):
-                residuals = self.data[f'{bone} used'] - self.models[bone][model_type].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+                if model_type == 'avg':
+                    residuals = self.data[f'{bone} used'].values - np.mean([
+                        self.models[bone]['xgb'].predict(self.models[bone]['scaler'].transform(self.data[features].values)),
+                        self.models[bone]['gbr'].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+                    ], axis=0)
+                else:
+                    residuals = self.data[f'{bone} used'].values - self.models[bone][model_type].predict(self.models[bone]['scaler'].transform(self.data[features].values))
                 ax.hist(residuals, bins=20, alpha=0.5, label=f'{bone.capitalize()} {model_type.upper()}')
                 ax.set_title(f'{bone.capitalize()} Residuals Histogram')
                 ax.legend()
@@ -280,7 +316,7 @@ class TibiaFemurPredictor:
         X_tibia = self.data[features].values
         y_tibia = self.data['tibia used'].values
         X_femur = self.data[features].values
-        y_femur = self.data['femur used'].values
+        y_femur = self.data[features].values
 
         fig, axes = plt.subplots(2, 2, figsize=(12, 8))
         fig.suptitle('XGB QQ Plots')
