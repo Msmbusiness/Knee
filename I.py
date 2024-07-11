@@ -5,7 +5,7 @@ from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
-from sklearn.model_selection import learning_curve
+from sklearn.model_selection import learning_curve, GridSearchCV
 import matplotlib.pyplot as plt
 from scipy.stats import skew, kurtosis, probplot
 from sklearn.linear_model import LinearRegression
@@ -45,24 +45,38 @@ def train_and_scale_models(data, features):
 
     scaler_tibia = StandardScaler().fit(X)
     X_scaled_tibia = scaler_tibia.transform(X)
-    tibia_xgb = XGBRegressor(n_estimators=100, random_state=1)
-    tibia_gbr = GradientBoostingRegressor(n_estimators=100, random_state=1)
-
     scaler_femur = StandardScaler().fit(X)
     X_scaled_femur = scaler_femur.transform(X)
-    femur_xgb = XGBRegressor(n_estimators=100, random_state=1)
-    femur_gbr = GradientBoostingRegressor(n_estimators=100, random_state=1)
 
-    # Fit models
-    tibia_xgb.fit(X_scaled_tibia, y_tibia)
-    tibia_gbr.fit(X_scaled_tibia, y_tibia)
+    # Hyperparameter tuning for XGBRegressor and GradientBoostingRegressor
+    param_grid_xgb = {
+        'n_estimators': [50, 100, 200],
+        'max_depth': [3, 5, 7],
+        'learning_rate': [0.01, 0.1, 0.2],
+        'reg_alpha': [0.0, 0.1, 0.5],
+        'reg_lambda': [0.0, 0.1, 0.5]
+    }
 
-    femur_xgb.fit(X_scaled_femur, y_femur)
-    femur_gbr.fit(X_scaled_femur, y_femur)
+    param_grid_gbr = {
+        'n_estimators': [50, 100, 200],
+        'max_depth': [3, 5, 7],
+        'learning_rate': [0.01, 0.1, 0.2]
+    }
+
+    xgb_tibia = GridSearchCV(XGBRegressor(random_state=1), param_grid_xgb, cv=5, scoring='neg_mean_squared_error')
+    xgb_femur = GridSearchCV(XGBRegressor(random_state=1), param_grid_xgb, cv=5, scoring='neg_mean_squared_error')
+
+    gbr_tibia = GridSearchCV(GradientBoostingRegressor(random_state=1), param_grid_gbr, cv=5, scoring='neg_mean_squared_error')
+    gbr_femur = GridSearchCV(GradientBoostingRegressor(random_state=1), param_grid_gbr, cv=5, scoring='neg_mean_squared_error')
+
+    xgb_tibia.fit(X_scaled_tibia, y_tibia)
+    xgb_femur.fit(X_scaled_femur, y_femur)
+    gbr_tibia.fit(X_scaled_tibia, y_tibia)
+    gbr_femur.fit(X_scaled_femur, y_femur)
 
     return {
-        'tibia': {'xgb': tibia_xgb, 'gbr': tibia_gbr, 'scaler': scaler_tibia},
-        'femur': {'xgb': femur_xgb, 'gbr': femur_gbr, 'scaler': scaler_femur}
+        'tibia': {'xgb': xgb_tibia.best_estimator_, 'gbr': gbr_tibia.best_estimator_, 'scaler': scaler_tibia},
+        'femur': {'xgb': xgb_femur.best_estimator_, 'gbr': gbr_femur.best_estimator_, 'scaler': scaler_femur}
     }
 
 class TibiaFemurPredictor:
@@ -106,7 +120,6 @@ class TibiaFemurPredictor:
         self.learning_curve_fig = fig
         st.pyplot(fig)
 
-    
     def predict(self, age, height, sex_val):
         if not self.models:
             st.error("Models are not trained yet.")
@@ -249,7 +262,7 @@ class TibiaFemurPredictor:
                 metrics['kurtosis'].append(kurtosis(y_true - preds))
 
         metrics_df = pd.DataFrame(metrics, index=pd.MultiIndex.from_product([bones, model_types], names=['Bone', 'Model']))
-        st.table(metrics_df.T.applymap(lambda x: round(x, 4)))
+        st.table(metrics_df.T.applymap(lambda x: round(x, 1)))
 
         fig, axes = plt.subplots(2, 2, figsize=(12, 8))
         for i, (bone, ax) in enumerate(zip(bones, axes.flatten())):
@@ -274,10 +287,10 @@ class TibiaFemurPredictor:
 
         for i, (bone, ax) in enumerate(zip(['tibia', 'femur'], axes.flatten())):
             residuals = self.data[f'{bone} used'] - self.models[bone]['xgb'].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+            residuals = np.round(residuals, 1)
             probplot(residuals, dist="norm", plot=ax)
             ax.set_title(f'{bone.capitalize()} XGB QQ Plot')
 
-        self.qq_plot_fig = fig
         st.pyplot(fig)
 
         fig, axes = plt.subplots(2, 2, figsize=(12, 8))
@@ -285,12 +298,12 @@ class TibiaFemurPredictor:
 
         for i, (bone, ax) in enumerate(zip(['tibia', 'femur'], axes.flatten())):
             residuals = self.data[f'{bone} used'] - self.models[bone]['gbr'].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+            residuals = np.round(residuals, 1)
             probplot(residuals, dist="norm", plot=ax)
             ax.set_title(f'{bone.capitalize()} GBR QQ Plot')
 
         self.qq_plot_fig = fig
         st.pyplot(fig)
-
 
     def fit_regression_line(self, sex_val, age):
         heights = np.linspace(60, 76, 100)
