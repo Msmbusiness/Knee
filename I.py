@@ -2,28 +2,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from xgboost import XGBRegressor
-from sklearn.ensemble import GradientBoostingRegressor, StackingRegressor
-from sklearn.linear_model import Ridge
+from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 from sklearn.model_selection import learning_curve
-from imblearn.over_sampling import RandomOverSampler
 import matplotlib.pyplot as plt
-import scipy.stats as stats
-from scipy.stats import ttest_rel, wilcoxon
-from scipy.stats import kurtosis
-from scipy.interpolate import make_interp_spline
+from scipy.stats import skew, kurtosis, probplot
 from sklearn.linear_model import LinearRegression
-import warnings
-from sklearn.exceptions import UndefinedMetricWarning
 import requests
 from io import StringIO
-import tempfile
-from fpdf import FPDF
-
-# Suppress specific warnings
-warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
-warnings.filterwarnings("ignore", message=".*test scores are non-finite.*", category=UserWarning, module='sklearn.model_selection._search')
 
 # Streamlit app title
 st.title("Total Knee Size Predictor")
@@ -60,31 +47,22 @@ def train_and_scale_models(data, features):
     X_scaled_tibia = scaler_tibia.transform(X)
     tibia_xgb = XGBRegressor(n_estimators=100, random_state=1)
     tibia_gbr = GradientBoostingRegressor(n_estimators=100, random_state=1)
-    tibia_ridge = Ridge()
 
     scaler_femur = StandardScaler().fit(X)
     X_scaled_femur = scaler_femur.transform(X)
     femur_xgb = XGBRegressor(n_estimators=100, random_state=1)
     femur_gbr = GradientBoostingRegressor(n_estimators=100, random_state=1)
-    femur_ridge = Ridge()
-
-    tibia_stack = StackingRegressor(estimators=[('xgb', tibia_xgb), ('gbr', tibia_gbr)], final_estimator=XGBRegressor(), cv=5)
-    femur_stack = StackingRegressor(estimators=[('xgb', femur_xgb), ('gbr', femur_gbr)], final_estimator=XGBRegressor(), cv=5)
 
     # Fit models
     tibia_xgb.fit(X_scaled_tibia, y_tibia)
     tibia_gbr.fit(X_scaled_tibia, y_tibia)
-    tibia_ridge.fit(X_scaled_tibia, y_tibia)
-    tibia_stack.fit(X_scaled_tibia, y_tibia)
 
     femur_xgb.fit(X_scaled_femur, y_femur)
     femur_gbr.fit(X_scaled_femur, y_femur)
-    femur_ridge.fit(X_scaled_femur, y_femur)
-    femur_stack.fit(X_scaled_femur, y_femur)
 
     return {
-        'tibia': {'xgb': tibia_xgb, 'gbr': tibia_gbr, 'ridge': tibia_ridge, 'stack': tibia_stack, 'scaler': scaler_tibia},
-        'femur': {'xgb': femur_xgb, 'gbr': femur_gbr, 'ridge': femur_ridge, 'stack': femur_stack, 'scaler': scaler_femur}
+        'tibia': {'xgb': tibia_xgb, 'gbr': tibia_gbr, 'scaler': scaler_tibia},
+        'femur': {'xgb': femur_xgb, 'gbr': femur_gbr, 'scaler': scaler_femur}
     }
 
 class TibiaFemurPredictor:
@@ -92,27 +70,12 @@ class TibiaFemurPredictor:
         self.models = None
         self.data = None
         self.prediction_df = None
-        self.metrics_df = None
-        self.height_vs_pred_fig = None
         self.learning_curve_fig = None
+        self.residuals_hist_fig = None
         self.qq_plot_fig = None
-
-    def oversample_minority_group(self, data):
-        if 'sex' not in data.columns:
-            st.error("The dataset does not contain the required 'sex' column.")
-            return data
-        if 0 in data['sex'].values and 1 in data['sex'].values:
-            X = data.drop('sex', axis=1)
-            y = data['sex']
-            ros = RandomOverSampler(random_state=1)
-            X_resampled, y_resampled = ros.fit_resample(X, y)
-            return pd.concat([X_resampled, y_resampled], axis=1)
-        else:
-            st.warning("Both male and female samples are required for oversampling.")
-            return data
+        self.height_vs_pred_fig = None
 
     def train_models(self):
-        self.data = self.oversample_minority_group(self.data)
         self.models = train_and_scale_models(self.data, ['height_log', 'age_height_interaction', 'sex'])
         st.session_state['models'] = self.models
         st.success("Models trained and scalers initialized.")
@@ -134,20 +97,17 @@ class TibiaFemurPredictor:
         y_tibia = self.data['tibia used'].values
         y_femur = self.data['femur used'].values
 
-        fig, axes = plt.subplots(4, 2, figsize=(20, 16))
-        self.plot_learning_curve(self.models['tibia']['xgb'], "Tibia XGB", X, y_tibia, axes[0, 0], 'blue')
-        self.plot_learning_curve(self.models['tibia']['gbr'], "Tibia GBR", X, y_tibia, axes[0, 1], 'red')
-        self.plot_learning_curve(self.models['tibia']['ridge'], "Tibia Ridge", X, y_tibia, axes[1, 0], 'green')
-        self.plot_learning_curve(self.models['tibia']['stack'], "Tibia Stack", X, y_tibia, axes[1, 1], 'purple')
-        self.plot_learning_curve(self.models['femur']['xgb'], "Femur XGB", X, y_femur, axes[2, 0], 'blue')
-        self.plot_learning_curve(self.models['femur']['gbr'], "Femur GBR", X, y_femur, axes[2, 1], 'red')
-        self.plot_learning_curve(self.models['femur']['ridge'], "Femur Ridge", X, y_femur, axes[3, 0], 'green')
-        self.plot_learning_curve(self.models['femur']['stack'], "Femur Stack", X, y_femur, axes[3, 1], 'purple')
+        fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+        self.plot_learning_curve(self.models['tibia']['xgb'], "Tibia XGB", X, y_tibia, axes[0], 'blue')
+        self.plot_learning_curve(self.models['tibia']['gbr'], "Tibia GBR", X, y_tibia, axes[0], 'red')
+        self.plot_learning_curve(self.models['femur']['xgb'], "Femur XGB", X, y_femur, axes[1], 'blue')
+        self.plot_learning_curve(self.models['femur']['gbr'], "Femur GBR", X, y_femur, axes[1], 'red')
 
         self.learning_curve_fig = fig
         st.pyplot(fig)
 
-    def predict(self, age, height, sex_val, model_type):
+    
+    def predict(self, age, height, sex_val):
         if not self.models:
             st.error("Models are not trained yet.")
             return
@@ -158,30 +118,15 @@ class TibiaFemurPredictor:
         X_new_scaled_tibia = tibia_scaler.transform(X_new)
         X_new_scaled_femur = femur_scaler.transform(X_new)
 
-        preds_tibia_xgb = self.models['tibia']['xgb'].predict(X_new_scaled_tibia)
-        preds_tibia_gbr = self.models['tibia']['gbr'].predict(X_new_scaled_tibia)
-        preds_tibia_ridge = self.models['tibia']['ridge'].predict(X_new_scaled_tibia)
-        preds_tibia_stack = self.models['tibia']['stack'].predict(X_new_scaled_tibia)
-        preds_femur_xgb = self.models['femur']['xgb'].predict(X_new_scaled_femur)
-        preds_femur_gbr = self.models['femur']['gbr'].predict(X_new_scaled_femur)
-        preds_femur_ridge = self.models['femur']['ridge'].predict(X_new_scaled_femur)
-        preds_femur_stack = self.models['femur']['stack'].predict(X_new_scaled_femur)
-
-        # Linear regression line prediction for GBR model
-        heights = np.linspace(60, 76, 100)
-        tibia_pred_gbr = [self.models['tibia']['gbr'].predict(tibia_scaler.transform(np.array([[np.log1p(h), age * h, sex_val]])))[0] for h in heights]
-        femur_pred_gbr = [self.models['femur']['gbr'].predict(femur_scaler.transform(np.array([[np.log1p(h), age * h, sex_val]])))[0] for h in heights]
-
-        tibia_reg = LinearRegression().fit(heights.reshape(-1, 1), tibia_pred_gbr)
-        femur_reg = LinearRegression().fit(heights.reshape(-1, 1), femur_pred_gbr)
-
-        tibia_reg_pred = tibia_reg.predict(np.array([[height]]))[0]
-        femur_reg_pred = femur_reg.predict(np.array([[height]]))[0]
+        tibia_preds_xgb = self.models['tibia']['xgb'].predict(X_new_scaled_tibia)
+        tibia_preds_gbr = self.models['tibia']['gbr'].predict(X_new_scaled_tibia)
+        femur_preds_xgb = self.models['femur']['xgb'].predict(X_new_scaled_femur)
+        femur_preds_gbr = self.models['femur']['gbr'].predict(X_new_scaled_femur)
 
         prediction_data = {
-            "Model": ["XGB", "GBR", "GBR with Reg Line", "Ridge", "Stack"],
-            "Predicted Femur": [round(preds_femur_xgb[0], 1), round(preds_femur_gbr[0], 1), round(femur_reg_pred, 1), round(preds_femur_ridge[0], 1), round(preds_femur_stack[0], 1)],
-            "Predicted Tibia": [round(preds_tibia_xgb[0], 1), round(preds_tibia_gbr[0], 1), round(tibia_reg_pred, 1), round(preds_tibia_ridge[0], 1), round(preds_tibia_stack[0], 1)]
+            "Model": ["XGB", "GBR"],
+            "Predicted Femur": [round(femur_preds_xgb[0], 1), round(femur_preds_gbr[0], 1)],
+            "Predicted Tibia": [round(tibia_preds_xgb[0], 1), round(tibia_preds_gbr[0], 1)]
         }
 
         prediction_df = pd.DataFrame(prediction_data)
@@ -189,7 +134,7 @@ class TibiaFemurPredictor:
 
         st.table(prediction_df)
 
-        # Highlight the row based on the rounded value of the GBR predicted femur size
+        avg_femur_pred = round(np.mean([femur_preds_xgb[0], femur_preds_gbr[0]]))
         femur_df = pd.DataFrame(femur_sizes).T
         femur_df.columns = ["A", "B"]
         femur_df.index.name = "Size"
@@ -197,203 +142,78 @@ class TibiaFemurPredictor:
         femur_df = femur_df.reset_index()
 
         def highlight_row(s):
-            return ['background-color: yellow' if s['Size'] == round(preds_femur_gbr[0]) else '' for _ in s.index]
+            return ['background-color: yellow' if s['Size'] == avg_femur_pred else '' for _ in s.index]
 
         st.table(femur_df.style.apply(highlight_row, axis=1))
-
-    def fit_regression_line(self, sex_val, age):
-        heights = np.linspace(60, 76, 100)
-        tibia_pred_gbr = []
-        femur_pred_gbr = []
-
-        for height in heights:
-            X_new = np.array([[np.log1p(height), age * height, sex_val]])
-            X_new_scaled_tibia = self.models['tibia']['scaler'].transform(X_new)
-            X_new_scaled_femur = self.models['femur']['scaler'].transform(X_new)
-
-            tibia_pred_gbr.append(self.models['tibia']['gbr'].predict(X_new_scaled_tibia)[0])
-            femur_pred_gbr.append(self.models['femur']['gbr'].predict(X_new_scaled_femur)[0])
-
-        # Fit linear regression lines
-        tibia_reg = LinearRegression().fit(heights.reshape(-1, 1), tibia_pred_gbr)
-        femur_reg = LinearRegression().fit(heights.reshape(-1, 1), femur_pred_gbr)
-
-        # Calculate metrics and residuals for the linear regression lines
-        tibia_reg_preds = tibia_reg.predict(heights.reshape(-1, 1))
-        femur_reg_preds = femur_reg.predict(heights.reshape(-1, 1))
-
-        tibia_mae = mean_absolute_error(tibia_pred_gbr, tibia_reg_preds)
-        femur_mae = mean_absolute_error(femur_pred_gbr, femur_reg_preds)
-
-        st.write(f"Tibia MAE (Regression Line): {tibia_mae:.4f}")
-        st.write(f"Femur MAE (Regression Line): {femur_mae:.4f}")
-
-        fig, ax = plt.subplots()
-        ax.plot(heights, tibia_pred_gbr, label='Tibia GBR', color='green')
-        ax.plot(heights, tibia_reg_preds, label='Tibia GBR Regression Line', linestyle='--', color='green')
-        ax.plot(heights, femur_pred_gbr, label='Femur GBR', color='blue')
-        ax.plot(heights, femur_reg_preds, label='Femur GBR Regression Line', linestyle='--', color='blue')
-
-        ax.set_xlabel('Height (inches)')
-        ax.set_ylabel('Predicted Size')
-        ax.set_title(f'Height vs Predicted Size with Regression Line ({"Female" if sex_val == 0 else "Male"})')
-        ax.legend()
-
-        self.height_vs_pred_fig = fig
-        st.pyplot(fig)
-
-    def plot_height_vs_predicted_size(self, sex_val, age):
-        heights = np.linspace(60, 76, 100)
-        tibia_pred_xgb = []
-        tibia_pred_gbr = []
-        tibia_pred_ridge = []
-        tibia_pred_stack = []
-        femur_pred_xgb = []
-        femur_pred_gbr = []
-        femur_pred_ridge = []
-        femur_pred_stack = []
+    def plot_height_vs_bone_size(self):
+        heights = np.arange(60, 76, 1)
+        tibia_preds_male = {'xgb': [], 'gbr': []}
+        femur_preds_male = {'xgb': [], 'gbr': []}
+        tibia_preds_female = {'xgb': [], 'gbr': []}
+        femur_preds_female = {'xgb': [], 'gbr': []}
 
         for height in heights:
-            X_new = np.array([[np.log1p(height), age * height, sex_val]])
-            X_new_scaled_tibia = self.models['tibia']['scaler'].transform(X_new)
-            X_new_scaled_femur = self.models['femur']['scaler'].transform(X_new)
+            for sex_val, tibia_preds, femur_preds in zip([1, 0], [tibia_preds_male, tibia_preds_female], [femur_preds_male, femur_preds_female]):
+                X_new = np.array([[np.log1p(height), self.data['age'].mean() * height, sex_val]])
+                X_new_scaled_tibia = self.models['tibia']['scaler'].transform(X_new)
+                X_new_scaled_femur = self.models['femur']['scaler'].transform(X_new)
 
-            tibia_pred_xgb.append(self.models['tibia']['xgb'].predict(X_new_scaled_tibia)[0])
-            tibia_pred_gbr.append(self.models['tibia']['gbr'].predict(X_new_scaled_tibia)[0])
-            tibia_pred_ridge.append(self.models['tibia']['ridge'].predict(X_new_scaled_tibia)[0])
-            tibia_pred_stack.append(self.models['tibia']['stack'].predict(X_new_scaled_tibia)[0])
-            femur_pred_xgb.append(self.models['femur']['xgb'].predict(X_new_scaled_femur)[0])
-            femur_pred_gbr.append(self.models['femur']['gbr'].predict(X_new_scaled_femur)[0])
-            femur_pred_ridge.append(self.models['femur']['ridge'].predict(X_new_scaled_femur)[0])
-            femur_pred_stack.append(self.models['femur']['stack'].predict(X_new_scaled_femur)[0])
+                tibia_preds['xgb'].append(self.models['tibia']['xgb'].predict(X_new_scaled_tibia)[0])
+                tibia_preds['gbr'].append(self.models['tibia']['gbr'].predict(X_new_scaled_tibia)[0])
+                femur_preds['xgb'].append(self.models['femur']['xgb'].predict(X_new_scaled_femur)[0])
+                femur_preds['gbr'].append(self.models['femur']['gbr'].predict(X_new_scaled_femur)[0])
 
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(10, 6))
         show_tibia_xgb = st.checkbox('Tibia XGB', value=True)
         show_tibia_gbr = st.checkbox('Tibia GBR', value=True)
-        show_tibia_ridge = st.checkbox('Tibia Ridge', value=True)
-        show_tibia_stack = st.checkbox('Tibia Stack', value=True)
         show_femur_xgb = st.checkbox('Femur XGB', value=True)
         show_femur_gbr = st.checkbox('Femur GBR', value=True)
-        show_femur_ridge = st.checkbox('Femur Ridge', value=True)
-        show_femur_stack = st.checkbox('Femur Stack', value=True)
-        smooth_method = st.selectbox('Select smoothing method:', ('None', 'Spline', 'Moving Average'))
 
-        if smooth_method == 'Spline':
-            heights_smooth = np.linspace(heights.min(), heights.max(), 300)
-            if show_tibia_xgb:
-                tibia_smooth = make_interp_spline(heights, tibia_pred_xgb)(heights_smooth)
-                ax.plot(heights_smooth, tibia_smooth, color='blue', label='Tibia XGB')
-            if show_tibia_gbr:
-                tibia_smooth = make_interp_spline(heights, tibia_pred_gbr)(heights_smooth)
-                ax.plot(heights_smooth, tibia_smooth, color='green', label='Tibia GBR')
-            if show_tibia_ridge:
-                tibia_smooth = make_interp_spline(heights, tibia_pred_ridge)(heights_smooth)
-                ax.plot(heights_smooth, tibia_smooth, color='orange', label='Tibia Ridge')
-            if show_tibia_stack:
-                tibia_smooth = make_interp_spline(heights, tibia_pred_stack)(heights_smooth)
-                ax.plot(heights_smooth, tibia_smooth, color='purple', label='Tibia Stack')
-            if show_femur_xgb:
-                femur_smooth = make_interp_spline(heights, femur_pred_xgb)(heights_smooth)
-                ax.plot(heights_smooth, femur_smooth, color='red', label='Femur XGB')
-            if show_femur_gbr:
-                femur_smooth = make_interp_spline(heights, femur_pred_gbr)(heights_smooth)
-                ax.plot(heights_smooth, femur_smooth, color='green', label='Femur GBR')
-            if show_femur_ridge:
-                femur_smooth = make_interp_spline(heights, femur_pred_ridge)(heights_smooth)
-                ax.plot(heights_smooth, femur_smooth, color='orange', label='Femur Ridge')
-            if show_femur_stack:
-                femur_smooth = make_interp_spline(heights, femur_pred_stack)(heights_smooth)
-                ax.plot(heights_smooth, femur_smooth, color='purple', label='Femur Stack')
-        elif smooth_method == 'Moving Average':
-            window_size = 5
-            if show_tibia_xgb:
-                tibia_ma = pd.Series(tibia_pred_xgb).rolling(window=window_size).mean().dropna().values
-                ax.plot(heights[window_size-1:], tibia_ma, color='blue', label='Tibia XGB (MA)')
-            if show_tibia_gbr:
-                tibia_ma = pd.Series(tibia_pred_gbr).rolling(window=window_size).mean().dropna().values
-                ax.plot(heights[window_size-1:], tibia_ma, color='green', label='Tibia GBR (MA)')
-            if show_tibia_ridge:
-                tibia_ma = pd.Series(tibia_pred_ridge).rolling(window=window_size).mean().dropna().values
-                ax.plot(heights[window_size-1:], tibia_ma, color='orange', label='Tibia Ridge (MA)')
-            if show_tibia_stack:
-                tibia_ma = pd.Series(tibia_pred_stack).rolling(window=window_size).mean().dropna().values
-                ax.plot(heights[window_size-1:], tibia_ma, color='purple', label='Tibia Stack (MA)')
-            if show_femur_xgb:
-                femur_ma = pd.Series(femur_pred_xgb).rolling(window=window_size).mean().dropna().values
-                ax.plot(heights[window_size-1:], femur_ma, color='red', label='Femur XGB (MA)')
-            if show_femur_gbr:
-                femur_ma = pd.Series(femur_pred_gbr).rolling(window=window_size).mean().dropna().values
-                ax.plot(heights[window_size-1:], femur_ma, color='green', label='Femur GBR (MA)')
-            if show_femur_ridge:
-                femur_ma = pd.Series(femur_pred_ridge).rolling(window=window_size).mean().dropna().values
-                ax.plot(heights[window_size-1:], femur_ma, color='orange', label='Femur Ridge (MA)')
-            if show_femur_stack:
-                femur_ma = pd.Series(femur_pred_stack).rolling(window=window_size).mean().dropna().values
-                ax.plot(heights[window_size-1:], femur_ma, color='purple', label='Femur Stack (MA)')
-        else:
-            if show_tibia_xgb:
-                ax.plot(heights, tibia_pred_xgb, color='blue', label='Tibia XGB')
-            if show_tibia_gbr:
-                ax.plot(heights, tibia_pred_gbr, color='green', label='Tibia GBR')
-            if show_tibia_ridge:
-                ax.plot(heights, tibia_pred_ridge, color='orange', label='Tibia Ridge')
-            if show_tibia_stack:
-                ax.plot(heights, tibia_pred_stack, color='purple', label='Tibia Stack')
-            if show_femur_xgb:
-                ax.plot(heights, femur_pred_xgb, color='red', label='Femur XGB')
-            if show_femur_gbr:
-                ax.plot(heights, femur_pred_gbr, color='green', label='Femur GBR')
-            if show_femur_ridge:
-                ax.plot(heights, femur_pred_ridge, color='orange', label='Femur Ridge')
-            if show_femur_stack:
-                ax.plot(heights, femur_pred_stack, color='purple', label='Femur Stack')
+        if show_tibia_xgb:
+            ax.plot(heights, tibia_preds_male['xgb'], label='Tibia XGB (Males)', color='blue', linestyle='--')
+            ax.plot(heights, tibia_preds_female['xgb'], label='Tibia XGB (Females)', color='blue')
+        if show_tibia_gbr:
+            ax.plot(heights, tibia_preds_male['gbr'], label='Tibia GBR (Males)', color='green', linestyle='--')
+            ax.plot(heights, tibia_preds_female['gbr'], label='Tibia GBR (Females)', color='green')
+        if show_femur_xgb:
+            ax.plot(heights, femur_preds_male['xgb'], label='Femur XGB (Males)', color='red', linestyle='--')
+            ax.plot(heights, femur_preds_female['xgb'], label='Femur XGB (Females)', color='red')
+        if show_femur_gbr:
+            ax.plot(heights, femur_preds_male['gbr'], label='Femur GBR (Males)', color='purple', linestyle='--')
+            ax.plot(heights, femur_preds_female['gbr'], label='Femur GBR (Females)', color='purple')
 
         ax.set_xlabel('Height (inches)')
         ax.set_ylabel('Predicted Size')
-        ax.set_title(f'Height vs Predicted Size ({"Female" if sex_val == 0 else "Male"})')
+        ax.set_title('Height vs Predicted Size (Males and Females)')
         ax.legend()
-
         self.height_vs_pred_fig = fig
         st.pyplot(fig)
 
-    def calculate_metrics(self, X, y, bone, model_type):
-        model = self.models[bone][model_type]
-        preds = model.predict(X)
+    def plot_odds_ratio(self):
+        heights = np.arange(64, 76, 1)
+        odds_ratios = []
 
-        residuals = y - preds
-        mae = mean_absolute_error(y, preds)
-        residuals_kurtosis = kurtosis(residuals)
+        for height in heights:
+            X_new = np.array([[np.log1p(height), self.data['age'].mean() * height, 1]])  # Males only
+            X_new_scaled_tibia = self.models['tibia']['scaler'].transform(X_new)
+            X_new_scaled_femur = self.models['femur']['scaler'].transform(X_new)
 
-        metrics = {
-            'model': model_type,
-            'r2_score': r2_score(y, preds),
-            'rmse': mean_squared_error(y, preds, squared=False),
-            'mse': mean_squared_error(y, preds),
-            'mae': mae,
-            'mape': np.mean(np.abs((y - preds) / y)) * 100,
-            'kurtosis': residuals_kurtosis,
-            'residuals': residuals
-        }
+            tibia_pred = self.models['tibia']['gbr'].predict(X_new_scaled_tibia)[0]
+            femur_pred = self.models['femur']['gbr'].predict(X_new_scaled_femur)[0]
+            odds_ratio = femur_pred - tibia_pred
+            odds_ratios.append(odds_ratio)
 
-        return metrics
+        heights = np.array(heights).reshape(-1, 1)
+        regression_line = LinearRegression().fit(heights, odds_ratios).predict(heights)
 
-    def display_interactive_table(self, tibia_metrics_xgb, tibia_metrics_gbr, tibia_metrics_ridge, tibia_metrics_stack, femur_metrics_xgb, femur_metrics_gbr, femur_metrics_ridge, femur_metrics_stack):
-        metrics_data = {
-            'Metric': ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis'],
-            'Tibia XGB': [tibia_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Tibia GBR': [tibia_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Tibia Ridge': [tibia_metrics_ridge[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Tibia Stack': [tibia_metrics_stack[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur XGB': [femur_metrics_xgb[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur GBR': [femur_metrics_gbr[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur Ridge': [femur_metrics_ridge[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']],
-            'Femur Stack': [femur_metrics_stack[key] for key in ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis']]
-        }
-
-        df_metrics = pd.DataFrame(metrics_data)
-        self.metrics_df = df_metrics
-
-        st.table(df_metrics)
+        plt.figure(figsize=(10, 6))
+        plt.plot(heights, odds_ratios, 'o', label='Difference (Femur Used - Tibia Used)', color='green')
+        plt.plot(heights, regression_line, '-', label='Regression Line', color='red')
+        plt.xlabel('Height (inches)')
+        plt.ylabel('Difference')
+        plt.title('Height vs Difference in Femur Used and Tibia Used (Males Only)')
+        plt.legend()
+        st.pyplot(plt)
 
     def evaluate_models(self):
         features = ['height_log', 'age_height_interaction', 'sex']
@@ -405,16 +225,42 @@ class TibiaFemurPredictor:
         X_tibia_scaled = self.models['tibia']['scaler'].transform(X_tibia)
         X_femur_scaled = self.models['femur']['scaler'].transform(X_femur)
 
-        tibia_metrics_xgb = self.calculate_metrics(X_tibia_scaled, y_tibia, 'tibia', 'xgb')
-        tibia_metrics_gbr = self.calculate_metrics(X_tibia_scaled, y_tibia, 'tibia', 'gbr')
-        tibia_metrics_ridge = self.calculate_metrics(X_tibia_scaled, y_tibia, 'tibia', 'ridge')
-        tibia_metrics_stack = self.calculate_metrics(X_tibia_scaled, y_tibia, 'tibia', 'stack')
-        femur_metrics_xgb = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'xgb')
-        femur_metrics_gbr = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'gbr')
-        femur_metrics_ridge = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'ridge')
-        femur_metrics_stack = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'stack')
+        metrics = {
+            'r2_score': [],
+            'adjusted_r2_score': [],
+            'mae': [],
+            'mape': [],
+            'skewness': [],
+            'kurtosis': []
+        }
 
-        self.display_interactive_table(tibia_metrics_xgb, tibia_metrics_gbr, tibia_metrics_ridge, tibia_metrics_stack, femur_metrics_xgb, femur_metrics_gbr, femur_metrics_ridge, femur_metrics_stack)
+        model_types = ['xgb', 'gbr']
+        bones = ['tibia', 'femur']
+
+        for model_type in model_types:
+            for bone in bones:
+                preds = self.models[bone][model_type].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+                y_true = self.data[f'{bone} used'].values
+                metrics['r2_score'].append(r2_score(y_true, preds))
+                metrics['adjusted_r2_score'].append(1 - (1 - r2_score(y_true, preds)) * (len(y_true) - 1) / (len(y_true) - X_tibia.shape[1] - 1))
+                metrics['mae'].append(mean_absolute_error(y_true, preds))
+                metrics['mape'].append(np.mean(np.abs((y_true - preds) / y_true)) * 100)
+                metrics['skewness'].append(skew(y_true - preds))
+                metrics['kurtosis'].append(kurtosis(y_true - preds))
+
+        metrics_df = pd.DataFrame(metrics, index=pd.MultiIndex.from_product([bones, model_types], names=['Bone', 'Model']))
+        st.table(metrics_df.T.applymap(lambda x: round(x, 4)))
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        for i, (bone, ax) in enumerate(zip(bones, axes.flatten())):
+            for j, model_type in enumerate(model_types):
+                residuals = self.data[f'{bone} used'] - self.models[bone][model_type].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+                ax.hist(residuals, bins=20, alpha=0.5, label=f'{bone.capitalize()} {model_type.upper()}')
+                ax.set_title(f'{bone.capitalize()} Residuals Histogram')
+                ax.legend()
+
+        self.residuals_hist_fig = fig
+        st.pyplot(fig)
 
     def plot_qq_plots(self):
         features = ['height_log', 'age_height_interaction', 'sex']
@@ -423,137 +269,63 @@ class TibiaFemurPredictor:
         X_femur = self.data[features].values
         y_femur = self.data['femur used'].values
 
-        X_tibia_scaled = self.models['tibia']['scaler'].transform(X_tibia)
-        X_femur_scaled = self.models['femur']['scaler'].transform(X_femur)
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        fig.suptitle('XGB QQ Plots')
 
-        residuals = {
-            'tibia_xgb': y_tibia - self.models['tibia']['xgb'].predict(X_tibia_scaled),
-            'tibia_gbr': y_tibia - self.models['tibia']['gbr'].predict(X_tibia_scaled),
-            'tibia_ridge': y_tibia - self.models['tibia']['ridge'].predict(X_tibia_scaled),
-            'tibia_stack': y_tibia - self.models['tibia']['stack'].predict(X_tibia_scaled),
-            'femur_xgb': y_femur - self.models['femur']['xgb'].predict(X_femur_scaled),
-            'femur_gbr': y_femur - self.models['femur']['gbr'].predict(X_femur_scaled),
-            'femur_ridge': y_femur - self.models['femur']['ridge'].predict(X_femur_scaled),
-            'femur_stack': y_femur - self.models['femur']['stack'].predict(X_femur_scaled),
-        }
-
-        fig, axes = plt.subplots(4, 2, figsize=(20, 16))
-        fig.suptitle('QQ Plots for Residuals')
-
-        for i, (key, res) in enumerate(residuals.items()):
-            ax = axes[i // 2, i % 2]
-            stats.probplot(res, dist="norm", plot=ax)
-            ax.set_title(key.replace('_', ' ').title())
+        for i, (bone, ax) in enumerate(zip(['tibia', 'femur'], axes.flatten())):
+            residuals = self.data[f'{bone} used'] - self.models[bone]['xgb'].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+            probplot(residuals, dist="norm", plot=ax)
+            ax.set_title(f'{bone.capitalize()} XGB QQ Plot')
 
         self.qq_plot_fig = fig
         st.pyplot(fig)
 
-    def calculate_residual_tests(self):
-        features = ['height_log', 'age_height_interaction', 'sex']
-        X_tibia = self.data[features].values
-        y_tibia = self.data['tibia used'].values
-        X_femur = self.data[features].values
-        y_femur = self.data['femur used'].values
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        fig.suptitle('GBR QQ Plots')
 
-        X_tibia_scaled = self.models['tibia']['scaler'].transform(X_tibia)
-        X_femur_scaled = self.models['femur']['scaler'].transform(X_femur)
+        for i, (bone, ax) in enumerate(zip(['tibia', 'femur'], axes.flatten())):
+            residuals = self.data[f'{bone} used'] - self.models[bone]['gbr'].predict(self.models[bone]['scaler'].transform(self.data[features].values))
+            probplot(residuals, dist="norm", plot=ax)
+            ax.set_title(f'{bone.capitalize()} GBR QQ Plot')
 
-        residuals = {
-            'tibia_xgb': y_tibia - self.models['tibia']['xgb'].predict(X_tibia_scaled),
-            'tibia_gbr': y_tibia - self.models['tibia']['gbr'].predict(X_tibia_scaled),
-            'tibia_ridge': y_tibia - self.models['tibia']['ridge'].predict(X_tibia_scaled),
-            'tibia_stack': y_tibia - self.models['tibia']['stack'].predict(X_tibia_scaled),
-            'femur_xgb': y_femur - self.models['femur']['xgb'].predict(X_femur_scaled),
-            'femur_gbr': y_femur - self.models['femur']['gbr'].predict(X_femur_scaled),
-            'femur_ridge': y_femur - self.models['femur']['ridge'].predict(X_femur_scaled),
-            'femur_stack': y_femur - self.models['femur']['stack'].predict(X_femur_scaled),
-        }
+        self.qq_plot_fig = fig
+        st.pyplot(fig)
 
-        residual_tests_data = {
-            'Model': [],
-            'T-score': [],
-            'P-value': [],
-            'Wilcoxon P-value': []
-        }
 
-        model_pairs = [
-            ('tibia_xgb', 'tibia_gbr'),
-            ('tibia_xgb', 'tibia_ridge'),
-            ('tibia_gbr', 'tibia_ridge'),
-            ('tibia_gbr', 'tibia_stack'),
-            ('femur_xgb', 'femur_gbr'),
-            ('femur_xgb', 'femur_ridge'),
-            ('femur_gbr', 'femur_ridge'),
-            ('femur_gbr', 'femur_stack')
-        ]
+    def fit_regression_line(self, sex_val, age):
+        heights = np.linspace(60, 76, 100)
+        femur_pred_xgb = []
+        femur_pred_gbr = []
 
-        for (model1, model2) in model_pairs:
-            t_score, p_value = ttest_rel(residuals[model1], residuals[model2])
-            _, wilcoxon_p_value = wilcoxon(residuals[model1], residuals[model2])
+        for height in heights:
+            X_new = np.array([[np.log1p(height), age * height, sex_val]])
+            X_new_scaled_femur = self.models['femur']['scaler'].transform(X_new)
 
-            residual_tests_data['Model'].append(f'{model1} vs {model2}')
-            residual_tests_data['T-score'].append(round(t_score, 4))
-            residual_tests_data['P-value'].append(round(p_value, 4))
-            residual_tests_data['Wilcoxon P-value'].append(round(wilcoxon_p_value, 4))
+            femur_pred_xgb.append(self.models['femur']['xgb'].predict(X_new_scaled_femur)[0])
+            femur_pred_gbr.append(self.models['femur']['gbr'].predict(X_new_scaled_femur)[0])
 
-        df_residual_tests = pd.DataFrame(residual_tests_data)
-        st.table(df_residual_tests)
+        model_type = st.selectbox("Select Model for Regression Line:", ["xgb", "gbr"])
+        if model_type == "xgb":
+            femur_preds = femur_pred_xgb
+        else:
+            femur_preds = femur_pred_gbr
 
-    def save_outputs_to_pdf(self):
-        pdf = FPDF()
-        pdf.add_page()
+        femur_reg = LinearRegression().fit(heights.reshape(-1, 1), femur_preds)
+        femur_reg_preds = femur_reg.predict(heights.reshape(-1, 1))
 
-        # Title
-        pdf.set_font("Arial", size=12)
-        pdf.cell(200, 10, txt="Total Knee Size Predictor Results", ln=True, align="C")
+        femur_mae = mean_absolute_error(femur_preds, femur_reg_preds)
 
-        # Prediction Table
-        if self.prediction_df is not None:
-            pdf.set_font("Arial", size=10)
-            pdf.cell(200, 10, txt="Predictions", ln=True, align="L")
-            pdf.set_font("Arial", size=8)
-            for i in range(len(self.prediction_df)):
-                row = self.prediction_df.iloc[i]
-                pdf.cell(200, 10, txt=str(row.values), ln=True, align="L")
+        st.write(f"Femur {model_type.upper()} MAE (Regression Line): {femur_mae:.4f}")
 
-        # Metrics Table
-        if self.metrics_df is not None:
-            pdf.add_page()
-            pdf.set_font("Arial", size=10)
-            pdf.cell(200, 10, txt="Metrics", ln=True, align="L")
-            pdf.set_font("Arial", size=8)
-            for i in range(len(self.metrics_df)):
-                row = self.metrics_df.iloc[i]
-                pdf.cell(200, 10, txt=str(row.values), ln=True, align="L")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(heights, femur_preds, 'o', label=f'Femur {model_type.upper()} Predictions', color='blue')
+        ax.plot(heights, femur_reg_preds, '-', label=f'Femur {model_type.upper()} Regression Line', color='blue')
 
-        # Height vs Predicted Size Plot
-        if self.height_vs_pred_fig is not None:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-                self.height_vs_pred_fig.savefig(tmpfile.name, format='png')
-                pdf.add_page()
-                pdf.image(tmpfile.name, x=10, y=10, w=190)
-                tmpfile.close()
-
-        # Learning Curves Plot
-        if self.learning_curve_fig is not None:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-                self.learning_curve_fig.savefig(tmpfile.name, format='png')
-                pdf.add_page()
-                pdf.image(tmpfile.name, x=10, y=10, w=190)
-                tmpfile.close()
-
-        # QQ Plots
-        if self.qq_plot_fig is not None:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-                self.qq_plot_fig.savefig(tmpfile.name, format='png')
-                pdf.add_page()
-                pdf.image(tmpfile.name, x=10, y=10, w=190)
-                tmpfile.close()
-
-        pdf_output = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        pdf.output(pdf_output.name)
-        st.success("PDF saved successfully!")
-        st.download_button("Download PDF", data=open(pdf_output.name, "rb").read(), file_name="output.pdf")
+        ax.set_xlabel('Height (inches)')
+        ax.set_ylabel('Femur Size')
+        ax.set_title(f'Regression Line Fit to Femur Size Predictions ({model_type.upper()})')
+        ax.legend()
+        st.pyplot(fig)
 
 def main():
     predictor = TibiaFemurPredictor()
@@ -577,33 +349,30 @@ def main():
         if 'models' in st.session_state:
             predictor.models = st.session_state['models']
             age = st.slider("Age:", min_value=55, max_value=85, value=65)
-            height = st.slider("Height (inches):", min_value=60, max_value=76, value=65)
-            sex = st.selectbox("Sex:", ["Female", "Male"])
-            sex_val = 0 if sex == "Female" else 1
-
-            predictor.plot_height_vs_predicted_size(sex_val, age)
+            height = st.slider("Height (inches):", min_value=59, max_value=75, value=65)
+            sex = st.selectbox("Sex:", ["Male", "Female"])
+            sex_val = 1 if sex == "Male" else 0
 
             if st.button("Predict"):
-                model_type = st.selectbox("Select Model", ["xgb", "gbr", "ridge", "stack"])
-                predictor.predict(age, height, sex_val, model_type)
+                predictor.predict(age, height, sex_val)
 
-            if st.button("Training CV Validation Plots"):
+            if st.checkbox("Plot Height vs Bone Size (Males and Females)"):
+                predictor.plot_height_vs_bone_size()
+
+            if st.checkbox("Plot Difference (Femur Used - Tibia Used) (Males Only)"):
+                predictor.plot_odds_ratio()
+
+            if st.checkbox("Training CV Validation Plots"):
                 predictor.plot_superimposed_learning_curves()
 
-            if st.button("QQ Plots for Residuals"):
-                predictor.plot_qq_plots()
-
-            if st.button("Evaluate Models"):
+            if st.checkbox("Evaluate Models"):
                 predictor.evaluate_models()
 
-            if st.button("Calculate Residual Tests"):
-                predictor.calculate_residual_tests()
+            if st.checkbox("Plot QQ Plots"):
+                predictor.plot_qq_plots()
 
-            if st.button("Fit Models with Regression Line"):
+            if st.checkbox("Fit Models with Regression Line"):
                 predictor.fit_regression_line(sex_val, age)
-
-            if st.button("Save Outputs to PDF"):
-                predictor.save_outputs_to_pdf()
 
     st.write("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
