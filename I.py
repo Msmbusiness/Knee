@@ -36,7 +36,7 @@ femur_sizes = {
     9: (78.3, 83)
 }
 
-@st.cache
+@st.cache_data
 def load_data_from_url(url):
     response = requests.get(url)
     response.raise_for_status()
