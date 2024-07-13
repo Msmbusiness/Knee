@@ -241,7 +241,7 @@ class TibiaFemurPredictor:
 
 def main():
     st.title("Total Knee Implant Size Predictor")
-     st.markdown("<h6 style='text-align: center;'>Michael Messieh MD</h6>", unsafe_allow_html=True)
+    st.markdown("<h6 style='text-align: center;'>Michael Messieh MD</h6>", unsafe_allow_html=True)
 
     predictor = TibiaFemurPredictor()
 
