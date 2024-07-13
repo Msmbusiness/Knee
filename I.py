@@ -226,7 +226,7 @@ class TibiaFemurPredictor:
         st.table(self.prediction_df)
 
         femur_df = pd.DataFrame(femur_sizes).T
-        femur_df.columns = ["A", "B"]
+        femur_df.columns = ["AP Femur", "ML Femur"]
         femur_df.index.name = "Femur Size"
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
@@ -240,7 +240,8 @@ class TibiaFemurPredictor:
         st.dataframe(femur_df.style.apply(highlight_row, axis=1))
 
 def main():
-    st.title("Tibia and Femur Predictor")
+    st.title("Total Knee Implant Size Predictor")
+     st.markdown("<h6 style='text-align: center;'>Michael Messieh MD</h6>", unsafe_allow_html=True)
 
     predictor = TibiaFemurPredictor()
 
