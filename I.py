@@ -13,6 +13,9 @@ import requests
 from io import StringIO
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
+import sys
+import os
+from contextlib import contextmanager
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -41,6 +44,19 @@ def load_data_from_url(url):
     data['height_log'] = np.log1p(data['height'])
     return data
 
+@contextmanager
+def suppress_output():
+    with open(os.devnull, 'w') as devnull:
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = devnull
+        sys.stderr = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+
 def bayesian_optimization_xgb(X, y):
     def xgb_evaluate(n_estimators, max_depth, learning_rate, reg_alpha, reg_lambda):
         model = XGBRegressor(
@@ -65,7 +81,8 @@ def bayesian_optimization_xgb(X, y):
         },
         random_state=1
     )
-    xgb_bo.maximize(init_points=5, n_iter=25)
+    with suppress_output():
+        xgb_bo.maximize(init_points=5, n_iter=25)
     return xgb_bo.max['params']
 
 def bayesian_optimization_gbr(X, y):
@@ -90,7 +107,8 @@ def bayesian_optimization_gbr(X, y):
         },
         random_state=1
     )
-    gbr_bo.maximize(init_points=5, n_iter=25)
+    with suppress_output():
+        gbr_bo.maximize(init_points=5, n_iter=25)
     return gbr_bo.max['params']
 
 def train_and_scale_models(data, features):
@@ -254,3 +272,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
