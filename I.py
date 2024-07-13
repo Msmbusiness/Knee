@@ -5,19 +5,14 @@ from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor, StackingRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
-from sklearn.model_selection import learning_curve
 from imblearn.over_sampling import RandomOverSampler
 import matplotlib.pyplot as plt
-import scipy.stats as stats
-from scipy.stats import ttest_rel, wilcoxon
-from scipy.stats import kurtosis
-from scipy.interpolate import make_interp_spline
-from sklearn.linear_model import LinearRegression
-import warnings
-from sklearn.exceptions import UndefinedMetricWarning
+from scipy.stats import ttest_rel, wilcoxon, kurtosis
+from bayes_opt import BayesianOptimization
 import requests
 from io import StringIO
-from bayes_opt import BayesianOptimization
+import warnings
+from sklearn.exceptions import UndefinedMetricWarning
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -167,13 +162,15 @@ class TibiaFemurPredictor:
     def train_models(self):
         self.data = self.oversample_minority_group(self.data)
         self.models = train_and_scale_models(self.data, ['height_log', 'age_height_interaction', 'sex'])
+        st.session_state['models'] = self.models
         st.success("Models trained and scalers initialized.")
 
     def predict(self, age, height, sex_val):
-        if not self.models:
+        if 'models' not in st.session_state or st.session_state['models'] is None:
             st.warning("Models are not trained yet.")
             return
 
+        self.models = st.session_state['models']
         X_new = np.array([[np.log1p(height), age * height, sex_val]])
         tibia_scaler = self.models['tibia']['scaler']
         femur_scaler = self.models['femur']['scaler']
