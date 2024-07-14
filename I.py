@@ -4,13 +4,15 @@ import numpy as np
 from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor, StackingRegressor
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 from imblearn.over_sampling import RandomOverSampler
+import matplotlib.pyplot as plt
+from scipy.stats import ttest_rel, wilcoxon, kurtosis
 from bayes_opt import BayesianOptimization
 import requests
 from io import StringIO
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
-from sklearn.metrics import mean_squared_error
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -185,23 +187,22 @@ class TibiaFemurPredictor:
         tibia_avg = round((preds_tibia_xgb[0] + preds_tibia_gbr[0] + preds_tibia_stack[0]) / 3, 1)
         femur_avg = round((preds_femur_xgb[0] + preds_femur_gbr[0] + preds_femur_stack[0]) / 3, 1)
 
-        # Update the session state with new predictions
-        st.session_state['preferred_femur'] = round(femur_avg)
-        st.session_state['preferred_tibia'] = round(tibia_avg)
+        preferred_femur = round(femur_avg, 1)
+        preferred_tibia = round(preds_tibia_xgb[0], 1)
 
         self.prediction_df["Predicted Femur"] = [
             round(preds_femur_xgb[0], 1),
             round(preds_femur_gbr[0], 1),
             round(preds_femur_stack[0], 1),
             femur_avg,
-            femur_avg
+            preferred_femur
         ]
         self.prediction_df["Predicted Tibia"] = [
             round(preds_tibia_xgb[0], 1),
             round(preds_tibia_gbr[0], 1),
             round(preds_tibia_stack[0], 1),
             tibia_avg,
-            tibia_avg
+            preferred_tibia
         ]
 
         st.table(self.prediction_df)
@@ -218,19 +219,15 @@ class TibiaFemurPredictor:
             'Medial-Lateral': [61, 64, 67, 70, 73, 76, 81, 86, 90]
         })
         tibia_df.set_index('Tibial size', inplace=True)
-        tibia_df = tibia_df.reset_index()
 
-        # Combine the femur and tibia dataframes
-        combined_df = pd.merge(femur_df, tibia_df, left_on='Femur Size', right_on='Tibial size', how='outer')
-        combined_df = combined_df.rename(columns={
-            'A': 'Femur Size A',
-            'B': 'Femur Size B',
-            'Tibial size': 'Tibial Size',
-            'Anterior-Posterior': 'Tibial Anterior-Posterior',
-            'Medial-Lateral': 'Tibial Medial-Lateral'
-        })
+        def highlight_femur_row(s):
+            return ['background-color: yellow; color: red'] * len(s) if s['Femur Size'] == femur_avg else [''] * len(s)
 
-        return combined_df
+        def highlight_tibia_row(s):
+            return ['background-color: yellow; color: red'] * len(s) if s.name == preferred_tibia else [''] * len(s)
+
+        st.dataframe(femur_df.style.apply(highlight_femur_row, axis=1))
+        st.dataframe(tibia_df.style.apply(highlight_tibia_row, axis=1))
 
 def main():
     st.title("Total Knee Implant Size Predictor")
@@ -258,19 +255,7 @@ def main():
     sex_val = 0 if sex == "Female" else 1
 
     if st.button("Predict"):
-        combined_df = predictor.predict(age, height, sex_val)
-
-        def highlight_row(s):
-            femur_color = 'background-color: yellow'
-            tibia_color = 'background-color: pink'
-            styles = [''] * len(s)
-            if 'preferred_femur' in st.session_state and s['Femur Size'] == st.session_state['preferred_femur']:
-                styles[0] = femur_color  # Assuming 'Femur Size' is the first column
-            if 'preferred_tibia' in st.session_state and s['Tibial Size'] == st.session_state['preferred_tibia']:
-                styles[3] = tibia_color  # Assuming 'Tibial Size' is the fourth column
-            return styles
-
-        st.dataframe(combined_df.style.apply(highlight_row, axis=1))
+        predictor.predict(age, height, sex_val)
 
     st.markdown("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
