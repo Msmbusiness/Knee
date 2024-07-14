@@ -4,18 +4,13 @@ import numpy as np
 from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor, StackingRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 from imblearn.over_sampling import RandomOverSampler
-import matplotlib.pyplot as plt
-from scipy.stats import ttest_rel, wilcoxon, kurtosis
 from bayes_opt import BayesianOptimization
 import requests
 from io import StringIO
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
-import sys
-import os
-from contextlib import contextmanager
+from sklearn.metrics import mean_squared_error
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -44,19 +39,6 @@ def load_data_from_url(url):
     data['height_log'] = np.log1p(data['height'])
     return data
 
-@contextmanager
-def suppress_output():
-    with open(os.devnull, 'w') as devnull:
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        sys.stdout = devnull
-        sys.stderr = devnull
-        try:
-            yield
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-
 def bayesian_optimization_xgb(X, y):
     def xgb_evaluate(n_estimators, max_depth, learning_rate, reg_alpha, reg_lambda):
         model = XGBRegressor(
@@ -81,8 +63,7 @@ def bayesian_optimization_xgb(X, y):
         },
         random_state=1
     )
-    with suppress_output():
-        xgb_bo.maximize(init_points=5, n_iter=25)
+    xgb_bo.maximize(init_points=5, n_iter=25)
     return xgb_bo.max['params']
 
 def bayesian_optimization_gbr(X, y):
@@ -107,8 +88,7 @@ def bayesian_optimization_gbr(X, y):
         },
         random_state=1
     )
-    with suppress_output():
-        gbr_bo.maximize(init_points=5, n_iter=25)
+    gbr_bo.maximize(init_points=5, n_iter=25)
     return gbr_bo.max['params']
 
 def train_and_scale_models(data, features):
@@ -202,42 +182,55 @@ class TibiaFemurPredictor:
         preds_femur_gbr = self.models['femur']['gbr'].predict(X_new_scaled_femur)
         preds_femur_stack = self.models['femur']['stack'].predict(X_new_scaled_femur)
 
-        tibia_avg = (preds_tibia_xgb[0] + preds_tibia_gbr[0] + preds_tibia_stack[0]) / 3
-        femur_avg = (preds_femur_xgb[0] + preds_femur_gbr[0] + preds_femur_stack[0]) / 3
+        tibia_avg = round((preds_tibia_xgb[0] + preds_tibia_gbr[0] + preds_tibia_stack[0]) / 3, 1)
+        femur_avg = round((preds_femur_xgb[0] + preds_femur_gbr[0] + preds_femur_stack[0]) / 3, 1)
 
-        preferred_femur = femur_avg
-        preferred_tibia = preds_tibia_xgb[0]
+        # Update the session state with new predictions
+        st.session_state['preferred_femur'] = round(femur_avg)
+        st.session_state['preferred_tibia'] = round(tibia_avg)
 
         self.prediction_df["Predicted Femur"] = [
             round(preds_femur_xgb[0], 1),
             round(preds_femur_gbr[0], 1),
             round(preds_femur_stack[0], 1),
-            round(femur_avg, 1),
-            round(preferred_femur, 1)
+            femur_avg,
+            femur_avg
         ]
         self.prediction_df["Predicted Tibia"] = [
             round(preds_tibia_xgb[0], 1),
             round(preds_tibia_gbr[0], 1),
             round(preds_tibia_stack[0], 1),
-            round(tibia_avg, 1),
-            round(preferred_tibia, 1)
+            tibia_avg,
+            tibia_avg
         ]
 
         st.table(self.prediction_df)
 
         femur_df = pd.DataFrame(femur_sizes).T
-        femur_df.columns = ["AP Femur", "ML Femur"]
+        femur_df.columns = ["A", "B"]
         femur_df.index.name = "Femur Size"
         femur_df.index = femur_df.index.astype(int)
         femur_df = femur_df.reset_index()
 
-        def highlight_row(s):
-            if s['Femur Size'] == round(femur_avg):
-                return ['background-color: yellow; color: red'] * len(s)
-            else:
-                return [''] * len(s)
+        tibia_df = pd.DataFrame({
+            'Tibial size': [1, 2, 3, 4, 5, 6, 7, 8, 9],
+            'Anterior-Posterior': [40, 42.5, 45, 47.5, 50, 52.5, 56, 60, 64],
+            'Medial-Lateral': [61, 64, 67, 70, 73, 76, 81, 86, 90]
+        })
+        tibia_df.set_index('Tibial size', inplace=True)
+        tibia_df = tibia_df.reset_index()
 
-        st.dataframe(femur_df.style.apply(highlight_row, axis=1))
+        # Combine the femur and tibia dataframes
+        combined_df = pd.merge(femur_df, tibia_df, left_on='Femur Size', right_on='Tibial size', how='outer')
+        combined_df = combined_df.rename(columns={
+            'A': 'Femur Size A',
+            'B': 'Femur Size B',
+            'Tibial size': 'Tibial Size',
+            'Anterior-Posterior': 'Tibial Anterior-Posterior',
+            'Medial-Lateral': 'Tibial Medial-Lateral'
+        })
+
+        return combined_df
 
 def main():
     st.title("Total Knee Implant Size Predictor")
@@ -259,13 +252,25 @@ def main():
         if st.button("Train Models"):
             predictor.train_models()
 
-    age = st.number_input("Age", min_value=55, max_value=85, value=55)
-    height = st.number_input("Height (inches)", min_value=60, max_value=76, value=60)
+    age = st.number_input("Age", min_value=55, max_value=85, value=70)
+    height = st.number_input("Height (inches)", min_value=60, max_value=76, value=69)
     sex = st.selectbox("Sex", ["Female", "Male"])
     sex_val = 0 if sex == "Female" else 1
 
     if st.button("Predict"):
-        predictor.predict(age, height, sex_val)
+        combined_df = predictor.predict(age, height, sex_val)
+
+        def highlight_row(s):
+            femur_color = 'background-color: yellow'
+            tibia_color = 'background-color: pink'
+            styles = [''] * len(s)
+            if 'preferred_femur' in st.session_state and s['Femur Size'] == st.session_state['preferred_femur']:
+                styles[0] = femur_color  # Assuming 'Femur Size' is the first column
+            if 'preferred_tibia' in st.session_state and s['Tibial Size'] == st.session_state['preferred_tibia']:
+                styles[3] = tibia_color  # Assuming 'Tibial Size' is the fourth column
+            return styles
+
+        st.dataframe(combined_df.style.apply(highlight_row, axis=1))
 
     st.markdown("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
@@ -273,4 +278,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
