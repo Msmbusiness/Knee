@@ -39,61 +39,61 @@ def load_data_from_url(url):
     data['height_log'] = np.log1p(data['height'])
     return data
 
+def bayesian_optimization_xgb(X, y):
+    def xgb_evaluate(n_estimators, max_depth, learning_rate, reg_alpha, reg_lambda):
+        model = XGBRegressor(
+            n_estimators=int(n_estimators),
+            max_depth=int(max_depth),
+            learning_rate=learning_rate,
+            reg_alpha=reg_alpha,
+            reg_lambda=reg_lambda,
+            random_state=1
+        )
+        model.fit(X, y)
+        return -mean_squared_error(y, model.predict(X))
+
+    xgb_bo = BayesianOptimization(
+        f=xgb_evaluate,
+        pbounds={
+            'n_estimators': (50, 100),
+            'max_depth': (3, 5),
+            'learning_rate': (0.01, 0.1),
+            'reg_alpha': (0, 0.5),
+            'reg_lambda': (0, 0.5)
+        },
+        random_state=1
+    )
+    xgb_bo.maximize(init_points=3, n_iter=5)
+    return xgb_bo.max['params']
+
+def bayesian_optimization_gbr(X, y):
+    def gbr_evaluate(n_estimators, max_depth, learning_rate, alpha):
+        model = GradientBoostingRegressor(
+            n_estimators=int(n_estimators),
+            max_depth=int(max_depth),
+            learning_rate=learning_rate,
+            alpha=alpha,
+            random_state=1
+        )
+        model.fit(X, y)
+        return -mean_squared_error(y, model.predict(X))
+
+    gbr_bo = BayesianOptimization(
+        f=gbr_evaluate,
+        pbounds={
+            'n_estimators': (50, 100),
+            'max_depth': (3, 5),
+            'learning_rate': (0.01, 0.1),
+            'alpha': (1e-6, 0.5)
+        },
+        random_state=1
+    )
+    gbr_bo.maximize(init_points=3, n_iter=5)
+    return gbr_bo.max['params']
+
 @st.cache_resource
 def train_and_scale_models(data, features):
-    def bayesian_optimization_xgb(X, y):
-        def xgb_evaluate(n_estimators, max_depth, learning_rate, reg_alpha, reg_lambda):
-            model = XGBRegressor(
-                n_estimators=int(n_estimators),
-                max_depth=int(max_depth),
-                learning_rate=learning_rate,
-                reg_alpha=reg_alpha,
-                reg_lambda=reg_lambda,
-                random_state=1
-            )
-            model.fit(X, y)
-            return -mean_squared_error(y, model.predict(X))
-
-        xgb_bo = BayesianOptimization(
-            f=xgb_evaluate,
-            pbounds={
-                'n_estimators': (50, 200),
-                'max_depth': (3, 7),
-                'learning_rate': (0.01, 0.2),
-                'reg_alpha': (0, 1),
-                'reg_lambda': (0, 1)
-            },
-            random_state=1
-        )
-        xgb_bo.maximize(init_points=5, n_iter=25)
-        return xgb_bo.max['params']
-
-    def bayesian_optimization_gbr(X, y):
-        def gbr_evaluate(n_estimators, max_depth, learning_rate, alpha):
-            model = GradientBoostingRegressor(
-                n_estimators=int(n_estimators),
-                max_depth=int(max_depth),
-                learning_rate=learning_rate,
-                alpha=alpha,
-                random_state=1
-            )
-            model.fit(X, y)
-            return -mean_squared_error(y, model.predict(X))
-
-        gbr_bo = BayesianOptimization(
-            f=gbr_evaluate,
-            pbounds={
-                'n_estimators': (50, 200),
-                'max_depth': (3, 7),
-                'learning_rate': (0.01, 0.2),
-                'alpha': (1e-6, 0.99)
-            },
-            random_state=1
-        )
-        gbr_bo.maximize(init_points=5, n_iter=25)
-        return gbr_bo.max['params']
-
-    st.write("Training models...")
+    st.write("Starting training process...")
     X = data[features].values
     y_tibia = data['tibia used'].values
     y_femur = data['femur used'].values
@@ -103,9 +103,13 @@ def train_and_scale_models(data, features):
     scaler_femur = StandardScaler().fit(X)
     X_scaled_femur = scaler_femur.transform(X)
 
+    st.write("Optimizing XGB parameters for tibia...")
     xgb_params_tibia = bayesian_optimization_xgb(X_scaled_tibia, y_tibia)
+    st.write("Optimizing GBR parameters for tibia...")
     gbr_params_tibia = bayesian_optimization_gbr(X_scaled_tibia, y_tibia)
+    st.write("Optimizing XGB parameters for femur...")
     xgb_params_femur = bayesian_optimization_xgb(X_scaled_femur, y_femur)
+    st.write("Optimizing GBR parameters for femur...")
     gbr_params_femur = bayesian_optimization_gbr(X_scaled_femur, y_femur)
 
     xgb_params_tibia['n_estimators'] = int(xgb_params_tibia['n_estimators'])
@@ -125,14 +129,21 @@ def train_and_scale_models(data, features):
     tibia_stack = StackingRegressor(estimators=[('xgb', tibia_xgb), ('gbr', tibia_gbr)], final_estimator=XGBRegressor(), cv=5)
     femur_stack = StackingRegressor(estimators=[('xgb', femur_xgb), ('gbr', femur_gbr)], final_estimator=XGBRegressor(), cv=5)
 
+    st.write("Training XGB model for tibia...")
     tibia_xgb.fit(X_scaled_tibia, y_tibia)
+    st.write("Training GBR model for tibia...")
     tibia_gbr.fit(X_scaled_tibia, y_tibia)
+    st.write("Training stacking model for tibia...")
     tibia_stack.fit(X_scaled_tibia, y_tibia)
 
+    st.write("Training XGB model for femur...")
     femur_xgb.fit(X_scaled_femur, y_femur)
+    st.write("Training GBR model for femur...")
     femur_gbr.fit(X_scaled_femur, y_femur)
+    st.write("Training stacking model for femur...")
     femur_stack.fit(X_scaled_femur, y_femur)
 
+    st.write("Training complete.")
     return {
         'tibia': {'xgb': tibia_xgb, 'gbr': tibia_gbr, 'stack': tibia_stack, 'scaler': scaler_tibia},
         'femur': {'xgb': femur_xgb, 'gbr': femur_gbr, 'stack': femur_stack, 'scaler': scaler_femur}
@@ -280,6 +291,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
