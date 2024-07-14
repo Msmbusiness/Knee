@@ -55,15 +55,15 @@ def bayesian_optimization_xgb(X, y):
     xgb_bo = BayesianOptimization(
         f=xgb_evaluate,
         pbounds={
-            'n_estimators': (50, 100),
-            'max_depth': (3, 5),
-            'learning_rate': (0.01, 0.1),
-            'reg_alpha': (0, 0.5),
-            'reg_lambda': (0, 0.5)
+            'n_estimators': (50, 200),
+            'max_depth': (3, 7),
+            'learning_rate': (0.01, 0.2),
+            'reg_alpha': (0, 1),
+            'reg_lambda': (0, 1)
         },
         random_state=1
     )
-    xgb_bo.maximize(init_points=3, n_iter=5)
+    xgb_bo.maximize(init_points=5, n_iter=25)
     return xgb_bo.max['params']
 
 def bayesian_optimization_gbr(X, y):
@@ -81,19 +81,17 @@ def bayesian_optimization_gbr(X, y):
     gbr_bo = BayesianOptimization(
         f=gbr_evaluate,
         pbounds={
-            'n_estimators': (50, 100),
-            'max_depth': (3, 5),
-            'learning_rate': (0.01, 0.1),
-            'alpha': (1e-6, 0.5)
+            'n_estimators': (50, 200),
+            'max_depth': (3, 7),
+            'learning_rate': (0.01, 0.2),
+            'alpha': (1e-6, 0.99)
         },
         random_state=1
     )
-    gbr_bo.maximize(init_points=3, n_iter=5)
+    gbr_bo.maximize(init_points=5, n_iter=25)
     return gbr_bo.max['params']
 
-@st.cache_resource
 def train_and_scale_models(data, features):
-    st.write("Starting training process...")
     X = data[features].values
     y_tibia = data['tibia used'].values
     y_femur = data['femur used'].values
@@ -103,13 +101,9 @@ def train_and_scale_models(data, features):
     scaler_femur = StandardScaler().fit(X)
     X_scaled_femur = scaler_femur.transform(X)
 
-    st.write("Optimizing XGB parameters for tibia...")
     xgb_params_tibia = bayesian_optimization_xgb(X_scaled_tibia, y_tibia)
-    st.write("Optimizing GBR parameters for tibia...")
     gbr_params_tibia = bayesian_optimization_gbr(X_scaled_tibia, y_tibia)
-    st.write("Optimizing XGB parameters for femur...")
     xgb_params_femur = bayesian_optimization_xgb(X_scaled_femur, y_femur)
-    st.write("Optimizing GBR parameters for femur...")
     gbr_params_femur = bayesian_optimization_gbr(X_scaled_femur, y_femur)
 
     xgb_params_tibia['n_estimators'] = int(xgb_params_tibia['n_estimators'])
@@ -129,21 +123,14 @@ def train_and_scale_models(data, features):
     tibia_stack = StackingRegressor(estimators=[('xgb', tibia_xgb), ('gbr', tibia_gbr)], final_estimator=XGBRegressor(), cv=5)
     femur_stack = StackingRegressor(estimators=[('xgb', femur_xgb), ('gbr', femur_gbr)], final_estimator=XGBRegressor(), cv=5)
 
-    st.write("Training XGB model for tibia...")
     tibia_xgb.fit(X_scaled_tibia, y_tibia)
-    st.write("Training GBR model for tibia...")
     tibia_gbr.fit(X_scaled_tibia, y_tibia)
-    st.write("Training stacking model for tibia...")
     tibia_stack.fit(X_scaled_tibia, y_tibia)
 
-    st.write("Training XGB model for femur...")
     femur_xgb.fit(X_scaled_femur, y_femur)
-    st.write("Training GBR model for femur...")
     femur_gbr.fit(X_scaled_femur, y_femur)
-    st.write("Training stacking model for femur...")
     femur_stack.fit(X_scaled_femur, y_femur)
 
-    st.write("Training complete.")
     return {
         'tibia': {'xgb': tibia_xgb, 'gbr': tibia_gbr, 'stack': tibia_stack, 'scaler': scaler_tibia},
         'femur': {'xgb': femur_xgb, 'gbr': femur_gbr, 'stack': femur_stack, 'scaler': scaler_femur}
@@ -206,15 +193,15 @@ class TibiaFemurPredictor:
             round(preds_femur_xgb[0], 1),
             round(preds_femur_gbr[0], 1),
             round(preds_femur_stack[0], 1),
-            round(femur_avg, 1),
-            round(femur_avg, 1)
+            femur_avg,
+            femur_avg
         ]
         self.prediction_df["Predicted Tibia"] = [
             round(preds_tibia_xgb[0], 1),
             round(preds_tibia_gbr[0], 1),
             round(preds_tibia_stack[0], 1),
-            round(tibia_avg, 1),
-            round(tibia_avg, 1)
+            tibia_avg,
+            tibia_avg
         ]
 
         st.table(self.prediction_df)
@@ -227,8 +214,8 @@ class TibiaFemurPredictor:
 
         tibia_df = pd.DataFrame({
             'Tibial size': [1, 2, 3, 4, 5, 6, 7, 8, 9],
-            'Anterior-Posterior': [40.0, 42.5, 45.0, 47.5, 50.0, 52.5, 56.0, 60.0, 64.0],
-            'Medial-Lateral': [61.0, 64.0, 67.0, 70.0, 73.0, 76.0, 81.0, 86.0, 90.0]
+            'Anterior-Posterior': [40, 42.5, 45, 47.5, 50, 52.5, 56, 60, 64],
+            'Medial-Lateral': [61, 64, 67, 70, 73, 76, 81, 86, 90]
         })
         tibia_df.set_index('Tibial size', inplace=True)
         tibia_df = tibia_df.reset_index()
@@ -243,7 +230,7 @@ class TibiaFemurPredictor:
             'Medial-Lateral': 'Tibial Medial-Lateral'
         })
 
-        return combined_df.round(1)
+        return combined_df
 
 def main():
     st.title("Total Knee Implant Size Predictor")
@@ -291,5 +278,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
