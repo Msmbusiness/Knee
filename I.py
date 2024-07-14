@@ -39,59 +39,60 @@ def load_data_from_url(url):
     data['height_log'] = np.log1p(data['height'])
     return data
 
-def bayesian_optimization_xgb(X, y):
-    def xgb_evaluate(n_estimators, max_depth, learning_rate, reg_alpha, reg_lambda):
-        model = XGBRegressor(
-            n_estimators=int(n_estimators),
-            max_depth=int(max_depth),
-            learning_rate=learning_rate,
-            reg_alpha=reg_alpha,
-            reg_lambda=reg_lambda,
-            random_state=1
-        )
-        model.fit(X, y)
-        return -mean_squared_error(y, model.predict(X))
-
-    xgb_bo = BayesianOptimization(
-        f=xgb_evaluate,
-        pbounds={
-            'n_estimators': (50, 200),
-            'max_depth': (3, 7),
-            'learning_rate': (0.01, 0.2),
-            'reg_alpha': (0, 1),
-            'reg_lambda': (0, 1)
-        },
-        random_state=1
-    )
-    xgb_bo.maximize(init_points=5, n_iter=25)
-    return xgb_bo.max['params']
-
-def bayesian_optimization_gbr(X, y):
-    def gbr_evaluate(n_estimators, max_depth, learning_rate, alpha):
-        model = GradientBoostingRegressor(
-            n_estimators=int(n_estimators),
-            max_depth=int(max_depth),
-            learning_rate=learning_rate,
-            alpha=alpha,
-            random_state=1
-        )
-        model.fit(X, y)
-        return -mean_squared_error(y, model.predict(X))
-
-    gbr_bo = BayesianOptimization(
-        f=gbr_evaluate,
-        pbounds={
-            'n_estimators': (50, 200),
-            'max_depth': (3, 7),
-            'learning_rate': (0.01, 0.2),
-            'alpha': (1e-6, 0.99)
-        },
-        random_state=1
-    )
-    gbr_bo.maximize(init_points=5, n_iter=25)
-    return gbr_bo.max['params']
-
+@st.cache_resource
 def train_and_scale_models(data, features):
+    def bayesian_optimization_xgb(X, y):
+        def xgb_evaluate(n_estimators, max_depth, learning_rate, reg_alpha, reg_lambda):
+            model = XGBRegressor(
+                n_estimators=int(n_estimators),
+                max_depth=int(max_depth),
+                learning_rate=learning_rate,
+                reg_alpha=reg_alpha,
+                reg_lambda=reg_lambda,
+                random_state=1
+            )
+            model.fit(X, y)
+            return -mean_squared_error(y, model.predict(X))
+
+        xgb_bo = BayesianOptimization(
+            f=xgb_evaluate,
+            pbounds={
+                'n_estimators': (50, 200),
+                'max_depth': (3, 7),
+                'learning_rate': (0.01, 0.2),
+                'reg_alpha': (0, 1),
+                'reg_lambda': (0, 1)
+            },
+            random_state=1
+        )
+        xgb_bo.maximize(init_points=5, n_iter=25)
+        return xgb_bo.max['params']
+
+    def bayesian_optimization_gbr(X, y):
+        def gbr_evaluate(n_estimators, max_depth, learning_rate, alpha):
+            model = GradientBoostingRegressor(
+                n_estimators=int(n_estimators),
+                max_depth=int(max_depth),
+                learning_rate=learning_rate,
+                alpha=alpha,
+                random_state=1
+            )
+            model.fit(X, y)
+            return -mean_squared_error(y, model.predict(X))
+
+        gbr_bo = BayesianOptimization(
+            f=gbr_evaluate,
+            pbounds={
+                'n_estimators': (50, 200),
+                'max_depth': (3, 7),
+                'learning_rate': (0.01, 0.2),
+                'alpha': (1e-6, 0.99)
+            },
+            random_state=1
+        )
+        gbr_bo.maximize(init_points=5, n_iter=25)
+        return gbr_bo.max['params']
+
     X = data[features].values
     y_tibia = data['tibia used'].values
     y_femur = data['femur used'].values
@@ -249,7 +250,7 @@ def main():
         file_url = csv_files[selected_file]
         predictor.data = load_data_from_url(file_url)
         st.success(f"Data file '{selected_file}' loaded successfully.")
-        if st.button("Train Models"):
+        if st.button("Train Models") and predictor.data is not None:
             predictor.train_models()
 
     age = st.number_input("Age", min_value=55, max_value=85, value=70)
@@ -257,7 +258,7 @@ def main():
     sex = st.selectbox("Sex", ["Female", "Male"])
     sex_val = 0 if sex == "Female" else 1
 
-    if st.button("Predict"):
+    if st.button("Predict") and 'models' in st.session_state:
         combined_df = predictor.predict(age, height, sex_val)
 
         def highlight_row(s):
