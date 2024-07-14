@@ -93,6 +93,7 @@ def train_and_scale_models(data, features):
         gbr_bo.maximize(init_points=5, n_iter=25)
         return gbr_bo.max['params']
 
+    st.write("Training models...")
     X = data[features].values
     y_tibia = data['tibia used'].values
     y_femur = data['femur used'].values
@@ -250,7 +251,7 @@ def main():
         file_url = csv_files[selected_file]
         predictor.data = load_data_from_url(file_url)
         st.success(f"Data file '{selected_file}' loaded successfully.")
-        if st.button("Train Models") and predictor.data is not None:
+        if st.button("Train Models"):
             predictor.train_models()
 
     age = st.number_input("Age", min_value=55, max_value=85, value=70)
@@ -258,7 +259,7 @@ def main():
     sex = st.selectbox("Sex", ["Female", "Male"])
     sex_val = 0 if sex == "Female" else 1
 
-    if st.button("Predict") and 'models' in st.session_state:
+    if st.button("Predict"):
         combined_df = predictor.predict(age, height, sex_val)
 
         def highlight_row(s):
