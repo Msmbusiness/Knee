@@ -4,15 +4,13 @@ import numpy as np
 from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor, StackingRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 from imblearn.over_sampling import RandomOverSampler
-import matplotlib.pyplot as plt
-from scipy.stats import ttest_rel, wilcoxon, kurtosis
 from bayes_opt import BayesianOptimization
 import requests
 from io import StringIO
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
+from sklearn.metrics import mean_squared_error
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -41,59 +39,61 @@ def load_data_from_url(url):
     data['height_log'] = np.log1p(data['height'])
     return data
 
-def bayesian_optimization_xgb(X, y):
-    def xgb_evaluate(n_estimators, max_depth, learning_rate, reg_alpha, reg_lambda):
-        model = XGBRegressor(
-            n_estimators=int(n_estimators),
-            max_depth=int(max_depth),
-            learning_rate=learning_rate,
-            reg_alpha=reg_alpha,
-            reg_lambda=reg_lambda,
-            random_state=1
-        )
-        model.fit(X, y)
-        return -mean_squared_error(y, model.predict(X))
-
-    xgb_bo = BayesianOptimization(
-        f=xgb_evaluate,
-        pbounds={
-            'n_estimators': (50, 200),
-            'max_depth': (3, 7),
-            'learning_rate': (0.01, 0.2),
-            'reg_alpha': (0, 1),
-            'reg_lambda': (0, 1)
-        },
-        random_state=1
-    )
-    xgb_bo.maximize(init_points=5, n_iter=25)
-    return xgb_bo.max['params']
-
-def bayesian_optimization_gbr(X, y):
-    def gbr_evaluate(n_estimators, max_depth, learning_rate, alpha):
-        model = GradientBoostingRegressor(
-            n_estimators=int(n_estimators),
-            max_depth=int(max_depth),
-            learning_rate=learning_rate,
-            alpha=alpha,
-            random_state=1
-        )
-        model.fit(X, y)
-        return -mean_squared_error(y, model.predict(X))
-
-    gbr_bo = BayesianOptimization(
-        f=gbr_evaluate,
-        pbounds={
-            'n_estimators': (50, 200),
-            'max_depth': (3, 7),
-            'learning_rate': (0.01, 0.2),
-            'alpha': (1e-6, 0.99)
-        },
-        random_state=1
-    )
-    gbr_bo.maximize(init_points=5, n_iter=25)
-    return gbr_bo.max['params']
-
+@st.cache_resource
 def train_and_scale_models(data, features):
+    def bayesian_optimization_xgb(X, y):
+        def xgb_evaluate(n_estimators, max_depth, learning_rate, reg_alpha, reg_lambda):
+            model = XGBRegressor(
+                n_estimators=int(n_estimators),
+                max_depth=int(max_depth),
+                learning_rate=learning_rate,
+                reg_alpha=reg_alpha,
+                reg_lambda=reg_lambda,
+                random_state=1
+            )
+            model.fit(X, y)
+            return -mean_squared_error(y, model.predict(X))
+
+        xgb_bo = BayesianOptimization(
+            f=xgb_evaluate,
+            pbounds={
+                'n_estimators': (50, 200),
+                'max_depth': (3, 7),
+                'learning_rate': (0.01, 0.2),
+                'reg_alpha': (0, 1),
+                'reg_lambda': (0, 1)
+            },
+            random_state=1
+        )
+        xgb_bo.maximize(init_points=5, n_iter=25)
+        return xgb_bo.max['params']
+
+    def bayesian_optimization_gbr(X, y):
+        def gbr_evaluate(n_estimators, max_depth, learning_rate, alpha):
+            model = GradientBoostingRegressor(
+                n_estimators=int(n_estimators),
+                max_depth=int(max_depth),
+                learning_rate=learning_rate,
+                alpha=alpha,
+                random_state=1
+            )
+            model.fit(X, y)
+            return -mean_squared_error(y, model.predict(X))
+
+        gbr_bo = BayesianOptimization(
+            f=gbr_evaluate,
+            pbounds={
+                'n_estimators': (50, 200),
+                'max_depth': (3, 7),
+                'learning_rate': (0.01, 0.2),
+                'alpha': (1e-6, 0.99)
+            },
+            random_state=1
+        )
+        gbr_bo.maximize(init_points=5, n_iter=25)
+        return gbr_bo.max['params']
+
+    st.write("Training models...")
     X = data[features].values
     y_tibia = data['tibia used'].values
     y_femur = data['femur used'].values
@@ -187,22 +187,23 @@ class TibiaFemurPredictor:
         tibia_avg = round((preds_tibia_xgb[0] + preds_tibia_gbr[0] + preds_tibia_stack[0]) / 3, 1)
         femur_avg = round((preds_femur_xgb[0] + preds_femur_gbr[0] + preds_femur_stack[0]) / 3, 1)
 
-        preferred_femur = round(femur_avg, 1)
-        preferred_tibia = round(preds_tibia_xgb[0], 1)
+        # Update the session state with new predictions
+        st.session_state['preferred_femur'] = round(femur_avg)
+        st.session_state['preferred_tibia'] = round(tibia_avg)
 
         self.prediction_df["Predicted Femur"] = [
             round(preds_femur_xgb[0], 1),
             round(preds_femur_gbr[0], 1),
             round(preds_femur_stack[0], 1),
-            femur_avg,
-            preferred_femur
+            round(femur_avg, 1),
+            round(femur_avg, 1)
         ]
         self.prediction_df["Predicted Tibia"] = [
             round(preds_tibia_xgb[0], 1),
             round(preds_tibia_gbr[0], 1),
             round(preds_tibia_stack[0], 1),
-            tibia_avg,
-            preferred_tibia
+            round(tibia_avg, 1),
+            round(tibia_avg, 1)
         ]
 
         st.table(self.prediction_df)
@@ -215,19 +216,23 @@ class TibiaFemurPredictor:
 
         tibia_df = pd.DataFrame({
             'Tibial size': [1, 2, 3, 4, 5, 6, 7, 8, 9],
-            'Anterior-Posterior': [40, 42.5, 45, 47.5, 50, 52.5, 56, 60, 64],
-            'Medial-Lateral': [61, 64, 67, 70, 73, 76, 81, 86, 90]
+            'Anterior-Posterior': [40.0, 42.5, 45.0, 47.5, 50.0, 52.5, 56.0, 60.0, 64.0],
+            'Medial-Lateral': [61.0, 64.0, 67.0, 70.0, 73.0, 76.0, 81.0, 86.0, 90.0]
         })
         tibia_df.set_index('Tibial size', inplace=True)
+        tibia_df = tibia_df.reset_index()
 
-        def highlight_femur_row(s):
-            return ['background-color: yellow; color: red'] * len(s) if s['Femur Size'] == femur_avg else [''] * len(s)
+        # Combine the femur and tibia dataframes
+        combined_df = pd.merge(femur_df, tibia_df, left_on='Femur Size', right_on='Tibial size', how='outer')
+        combined_df = combined_df.rename(columns={
+            'A': 'Femur Size A',
+            'B': 'Femur Size B',
+            'Tibial size': 'Tibial Size',
+            'Anterior-Posterior': 'Tibial Anterior-Posterior',
+            'Medial-Lateral': 'Tibial Medial-Lateral'
+        })
 
-        def highlight_tibia_row(s):
-            return ['background-color: yellow; color: red'] * len(s) if s.name == preferred_tibia else [''] * len(s)
-
-        st.dataframe(femur_df.style.apply(highlight_femur_row, axis=1))
-        st.dataframe(tibia_df.style.apply(highlight_tibia_row, axis=1))
+        return combined_df.round(1)
 
 def main():
     st.title("Total Knee Implant Size Predictor")
@@ -255,7 +260,19 @@ def main():
     sex_val = 0 if sex == "Female" else 1
 
     if st.button("Predict"):
-        predictor.predict(age, height, sex_val)
+        combined_df = predictor.predict(age, height, sex_val)
+
+        def highlight_row(s):
+            femur_color = 'background-color: yellow'
+            tibia_color = 'background-color: pink'
+            styles = [''] * len(s)
+            if 'preferred_femur' in st.session_state and s['Femur Size'] == st.session_state['preferred_femur']:
+                styles[0] = femur_color  # Assuming 'Femur Size' is the first column
+            if 'preferred_tibia' in st.session_state and s['Tibial Size'] == st.session_state['preferred_tibia']:
+                styles[3] = tibia_color  # Assuming 'Tibial Size' is the fourth column
+            return styles
+
+        st.dataframe(combined_df.style.apply(highlight_row, axis=1))
 
     st.markdown("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
