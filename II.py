@@ -1,7 +1,8 @@
+import warnings
 import streamlit as st
 import pandas as pd
 import numpy as np
-from xgboost import XGBRegressor
+from xgboost import XGBRegressor, plot_importance
 from sklearn.ensemble import GradientBoostingRegressor, StackingRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
@@ -22,6 +23,7 @@ from sklearn.inspection import PartialDependenceDisplay
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 warnings.filterwarnings("ignore", message=".*test scores are non-finite.*", category=UserWarning, module='sklearn.model_selection._search')
+warnings.filterwarnings("ignore", message="ARRAY API.*", category=UserWarning)
 
 # Streamlit app title
 st.title("Total Knee Size Predictor")
@@ -76,7 +78,7 @@ def train_and_scale_models(data, features):
             },
             random_state=1
         )
-        xgb_bo.maximize(init_points=5, n_iter=25)
+        xgb_bo.maximize(init_points=3, n_iter=10)  # Reduced iterations for initial testing
         return xgb_bo.max['params']
 
     def bayesian_optimization_gbr(X, y):
@@ -101,7 +103,7 @@ def train_and_scale_models(data, features):
             },
             random_state=1
         )
-        gbr_bo.maximize(init_points=5, n_iter=25)
+        gbr_bo.maximize(init_points=3, n_iter=10)  # Reduced iterations for initial testing
         return gbr_bo.max['params']
 
     st.write("Training models...")
@@ -109,14 +111,19 @@ def train_and_scale_models(data, features):
     y_tibia = data['tibia used'].values
     y_femur = data['femur used'].values
 
+    st.write("Scaling data...")
     scaler_tibia = StandardScaler().fit(X)
     X_scaled_tibia = scaler_tibia.transform(X)
     scaler_femur = StandardScaler().fit(X)
     X_scaled_femur = scaler_femur.transform(X)
 
+    st.write("Optimizing XGB parameters for tibia...")
     xgb_params_tibia = bayesian_optimization_xgb(X_scaled_tibia, y_tibia)
+    st.write("Optimizing GBR parameters for tibia...")
     gbr_params_tibia = bayesian_optimization_gbr(X_scaled_tibia, y_tibia)
+    st.write("Optimizing XGB parameters for femur...")
     xgb_params_femur = bayesian_optimization_xgb(X_scaled_femur, y_femur)
+    st.write("Optimizing GBR parameters for femur...")
     gbr_params_femur = bayesian_optimization_gbr(X_scaled_femur, y_femur)
 
     xgb_params_tibia['n_estimators'] = int(xgb_params_tibia['n_estimators'])
@@ -128,20 +135,28 @@ def train_and_scale_models(data, features):
     gbr_params_femur['n_estimators'] = int(gbr_params_femur['n_estimators'])
     gbr_params_femur['max_depth'] = int(gbr_params_femur['max_depth'])
 
+    st.write("Training XGB model for tibia...")
     tibia_xgb = XGBRegressor(**xgb_params_tibia, random_state=1)
-    tibia_gbr = GradientBoostingRegressor(**gbr_params_tibia, random_state=1)
-    femur_xgb = XGBRegressor(**xgb_params_femur, random_state=1)
-    femur_gbr = GradientBoostingRegressor(**gbr_params_femur, random_state=1)
-
-    tibia_stack = StackingRegressor(estimators=[('xgb', tibia_xgb), ('gbr', tibia_gbr)], final_estimator=XGBRegressor(), cv=5)
-    femur_stack = StackingRegressor(estimators=[('xgb', femur_xgb), ('gbr', femur_gbr)], final_estimator=XGBRegressor(), cv=5)
-
     tibia_xgb.fit(X_scaled_tibia, y_tibia)
+
+    st.write("Training GBR model for tibia...")
+    tibia_gbr = GradientBoostingRegressor(**gbr_params_tibia, random_state=1)
     tibia_gbr.fit(X_scaled_tibia, y_tibia)
+
+    st.write("Training stacked model for tibia...")
+    tibia_stack = StackingRegressor(estimators=[('xgb', tibia_xgb), ('gbr', tibia_gbr)], final_estimator=XGBRegressor(), cv=5)
     tibia_stack.fit(X_scaled_tibia, y_tibia)
 
+    st.write("Training XGB model for femur...")
+    femur_xgb = XGBRegressor(**xgb_params_femur, random_state=1)
     femur_xgb.fit(X_scaled_femur, y_femur)
+
+    st.write("Training GBR model for femur...")
+    femur_gbr = GradientBoostingRegressor(**gbr_params_femur, random_state=1)
     femur_gbr.fit(X_scaled_femur, y_femur)
+
+    st.write("Training stacked model for femur...")
+    femur_stack = StackingRegressor(estimators=[('xgb', femur_xgb), ('gbr', femur_gbr)], final_estimator=XGBRegressor(), cv=5)
     femur_stack.fit(X_scaled_femur, y_femur)
 
     return {
@@ -553,7 +568,7 @@ class TibiaFemurPredictor:
                 st.write(f"#### {bone.capitalize()}")
                 model_instance = self.models[bone]['xgb']
                 explainer = shap.Explainer(model_instance)
-                shap_values = explainer.shap_values(self.data[features])
+                shap_values = explainer(self.data[features])
 
                 shap.summary_plot(shap_values, self.data[features], plot_type="bar")
                 st.pyplot(plt)
@@ -569,7 +584,6 @@ class TibiaFemurPredictor:
                 fig, ax = plt.subplots(figsize=(10, 5))
                 PartialDependenceDisplay.from_estimator(model_instance, self.data[features], features, ax=ax)
                 st.pyplot(fig)
-
 
 def main():
     predictor = TibiaFemurPredictor()
@@ -628,3 +642,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
