@@ -18,6 +18,7 @@ import requests
 from io import StringIO
 import shap
 from sklearn.inspection import PartialDependenceDisplay
+from concurrent.futures import ThreadPoolExecutor
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -115,10 +116,16 @@ def train_and_scale_models(data, features):
     scaler_femur = StandardScaler().fit(X)
     X_scaled_femur = scaler_femur.transform(X)
 
-    xgb_params_tibia = bayesian_optimization_xgb(X_scaled_tibia, y_tibia)
-    gbr_params_tibia = bayesian_optimization_gbr(X_scaled_tibia, y_tibia)
-    xgb_params_femur = bayesian_optimization_xgb(X_scaled_femur, y_femur)
-    gbr_params_femur = bayesian_optimization_gbr(X_scaled_femur, y_femur)
+    with ThreadPoolExecutor() as executor:
+        xgb_future_tibia = executor.submit(bayesian_optimization_xgb, X_scaled_tibia, y_tibia)
+        gbr_future_tibia = executor.submit(bayesian_optimization_gbr, X_scaled_tibia, y_tibia)
+        xgb_future_femur = executor.submit(bayesian_optimization_xgb, X_scaled_femur, y_femur)
+        gbr_future_femur = executor.submit(bayesian_optimization_gbr, X_scaled_femur, y_femur)
+
+    xgb_params_tibia = xgb_future_tibia.result()
+    gbr_params_tibia = gbr_future_tibia.result()
+    xgb_params_femur = xgb_future_femur.result()
+    gbr_params_femur = gbr_future_femur.result()
 
     xgb_params_tibia['n_estimators'] = int(xgb_params_tibia['n_estimators'])
     xgb_params_tibia['max_depth'] = int(xgb_params_tibia['max_depth'])
@@ -137,13 +144,13 @@ def train_and_scale_models(data, features):
     tibia_stack = StackingRegressor(estimators=[('xgb', tibia_xgb), ('gbr', tibia_gbr)], final_estimator=XGBRegressor(), cv=5)
     femur_stack = StackingRegressor(estimators=[('xgb', femur_xgb), ('gbr', femur_gbr)], final_estimator=XGBRegressor(), cv=5)
 
-    tibia_xgb.fit(X_scaled_tibia, y_tibia)
-    tibia_gbr.fit(X_scaled_tibia, y_tibia)
-    tibia_stack.fit(X_scaled_tibia, y_tibia)
-
-    femur_xgb.fit(X_scaled_femur, y_femur)
-    femur_gbr.fit(X_scaled_femur, y_femur)
-    femur_stack.fit(X_scaled_femur, y_femur)
+    with ThreadPoolExecutor() as executor:
+        executor.submit(tibia_xgb.fit, X_scaled_tibia, y_tibia)
+        executor.submit(tibia_gbr.fit, X_scaled_tibia, y_tibia)
+        executor.submit(tibia_stack.fit, X_scaled_tibia, y_tibia)
+        executor.submit(femur_xgb.fit, X_scaled_femur, y_femur)
+        executor.submit(femur_gbr.fit, X_scaled_femur, y_femur)
+        executor.submit(femur_stack.fit, X_scaled_femur, y_femur)
 
     return {
         'tibia': {'xgb': tibia_xgb, 'gbr': tibia_gbr, 'stack': tibia_stack, 'scaler': scaler_tibia},
