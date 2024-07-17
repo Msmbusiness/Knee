@@ -6,4 +6,14 @@ scikit-learn
 imblearn
 bayesian-optimization
 requests
-
+streamlit
+pandas
+numpy
+xgboost
+scikit-learn
+matplotlib
+scipy
+imbalanced-learn
+bayesian-optimization
+requests
+matplotlib
