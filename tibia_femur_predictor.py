@@ -11,8 +11,8 @@ import warnings
 from sklearn.exceptions import UndefinedMetricWarning
 from imblearn.over_sampling import RandomOverSampler
 from matplotlib.backends.backend_pdf import PdfPages
-import streamlit as st
-import os
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -24,15 +24,17 @@ class TibiaFemurPredictor:
             'tibia': {'xgb': None, 'gbr': None, 'scaler': None},
             'femur': {'xgb': None, 'gbr': None, 'scaler': None}
         }
+        self.data_file_path = None
         self.data = None
 
-    def upload_data(self, file):
-        if file:
-            self.load_data(file)
-            st.success("Data file loaded successfully.")
+    def upload_data(self):
+        self.data_file_path = filedialog.askopenfilename()
+        if self.data_file_path:
+            self.load_data(self.data_file_path)
+            messagebox.showinfo("Info", "Data file loaded successfully.")
 
-    def load_data(self, file):
-        self.data = pd.read_csv(file)
+    def load_data(self, file_path):
+        self.data = pd.read_csv(file_path)
         self.data.columns = self.data.columns.str.strip()
         self.data['age_height_interaction'] = self.data['age'] * self.data['height']
         self.data['height_log'] = np.log1p(self.data['height'])
@@ -47,11 +49,11 @@ class TibiaFemurPredictor:
 
             self.data = pd.concat([X_resampled, y_resampled], axis=1)
         else:
-            st.warning("Both male and female samples are required for oversampling.")
+            messagebox.showwarning("Warning", "Both male and female samples are required for oversampling.")
 
     def train_and_scale_models(self, df, features):
         if len(df) < 2:
-            st.warning("Not enough data to train models.")
+            messagebox.showwarning("Warning", "Not enough data to train models.")
             return
 
         X = df[features].values
@@ -90,10 +92,10 @@ class TibiaFemurPredictor:
         femur_metrics_xgb = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'xgb')
         femur_metrics_gbr = self.calculate_metrics(X_femur_scaled, y_femur, 'femur', 'gbr')
 
-        self.display_metrics(tibia_metrics_xgb, "Tibia Metrics (XGB)")
-        self.display_metrics(tibia_metrics_gbr, "Tibia Metrics (GBR)")
-        self.display_metrics(femur_metrics_xgb, "Femur Metrics (XGB)")
-        self.display_metrics(femur_metrics_gbr, "Femur Metrics (GBR)")
+        self.display_interactive_table(tibia_metrics_xgb, "Tibia Metrics (XGB)")
+        self.display_interactive_table(tibia_metrics_gbr, "Tibia Metrics (GBR)")
+        self.display_interactive_table(femur_metrics_xgb, "Femur Metrics (XGB)")
+        self.display_interactive_table(femur_metrics_gbr, "Femur Metrics (GBR)")
 
         # Plot histograms of residuals
         self.plot_residuals_histogram(tibia_metrics_xgb['residuals'], tibia_metrics_gbr['residuals'], femur_metrics_xgb['residuals'], femur_metrics_gbr['residuals'])
@@ -119,9 +121,28 @@ class TibiaFemurPredictor:
 
         return metrics
 
-    def display_metrics(self, metrics, title):
-        st.subheader(title)
-        st.write(pd.DataFrame(metrics, index=[0]))
+    def display_interactive_table(self, metrics, title):
+        import tkinter as tk
+        from tkinter import ttk
+
+        root = tk.Tk()
+        root.title(title)
+
+        columns = ('Metric', 'Value')
+        tree = ttk.Treeview(root, columns=columns, show='headings')
+
+        tree.heading('Metric', text='Metric')
+        tree.heading('Value', text='Value')
+
+        data = { "Metric": ['r2_score', 'rmse', 'mse', 'mae', 'mape', 'kurtosis'],
+                 "Value": [f"{metrics['r2_score']:.2f}", f"{metrics['rmse']:.2f}", f"{metrics['mse']:.2f}",
+                           f"{metrics['mae']:.2f}", f"{metrics['mape']:.2f}", f"{metrics['kurtosis']:.2f}"] }
+
+        for metric, value in zip(data['Metric'], data['Value']):
+            tree.insert('', tk.END, values=(metric, value))
+
+        tree.pack()
+        root.mainloop()
 
     def plot_residuals_histogram(self, tibia_residuals_xgb, tibia_residuals_gbr, femur_residuals_xgb, femur_residuals_gbr):
         fig, axes = plt.subplots(2, 2, figsize=(15, 10))
@@ -146,7 +167,8 @@ class TibiaFemurPredictor:
         axes[1, 1].set_xlabel("Residuals")
         axes[1, 1].set_ylabel("Frequency")
 
-        st.pyplot(fig)
+        plt.tight_layout()
+        plt.show()
 
     def plot_learning_curve(self, estimator, title, X, y, ylim=None, cv=None, n_jobs=None, train_sizes=np.linspace(.1, 1.0, 5), ax=None, color=None):
         if ax is None:
@@ -175,11 +197,11 @@ class TibiaFemurPredictor:
 
     def plot_superimposed_learning_curves(self):
         if self.data is None:
-            st.error("Data not loaded or processed correctly.")
+            print("Error: Data not loaded or processed correctly.")
             return
 
         if len(self.data) < 2:
-            st.error("Not enough data to plot learning curves.")
+            print("Not enough data to plot learning curves.")
             return
 
         X_tibia = self.data[['height_log', 'age_height_interaction', 'sex']].values
@@ -198,11 +220,44 @@ class TibiaFemurPredictor:
         axes[0].legend(loc="best")
         axes[1].legend(loc="best")
 
-        st.pyplot(fig)
+        plt.tight_layout()
+        plt.show()
+
+    def save_superimposed_learning_curves(self):
+        if self.data is None:
+            print("Error: Data not loaded or processed correctly.")
+            return
+
+        if len(self.data) < 2:
+            print("Not enough data to plot learning curves.")
+            return
+
+        X_tibia = self.data[['height_log', 'age_height_interaction', 'sex']].values
+        y_tibia = self.data['tibia used'].values
+        X_femur = self.data[['height_log', 'age_height_interaction', 'sex']].values
+        y_femur = self.data['femur used'].values
+
+        with PdfPages('superimposed_learning_curves.pdf') as pdf:
+            fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+
+            self.plot_learning_curve(self.models['tibia']['xgb'], "Tibia XGB", X_tibia, y_tibia, ax=axes[0], color='blue')
+            self.plot_learning_curve(self.models['tibia']['gbr'], "Tibia GBR", X_tibia, y_tibia, ax=axes[0], color='green')
+
+            self.plot_learning_curve(self.models['femur']['xgb'], "Femur XGB", X_femur, y_femur, ax=axes[1], color='blue')
+            self.plot_learning_curve(self.models['femur']['gbr'], "Femur GBR", X_femur, y_femur, ax=axes[1], color='green')
+
+            axes[0].legend(loc="best")
+            axes[1].legend(loc="best")
+
+            plt.tight_layout()
+            pdf.savefig(fig)
+            plt.close(fig)
+
+        messagebox.showinfo("Info", "Learning curves saved to PDF.")
 
     def predict(self, age, height, sex, model_type):
         if self.models['tibia']['scaler'] is None or self.models['femur']['scaler'] is None:
-            st.error("Models are not trained yet.")
+            messagebox.showerror("Error", "Models are not trained yet.")
             return
 
         X_new = np.array([[np.log1p(height), age * height, sex]])
@@ -213,36 +268,63 @@ class TibiaFemurPredictor:
         preds_tibia = self.models['tibia'][model_type].predict(X_new_scaled)
         preds_femur = self.models['femur'][model_type].predict(X_new_scaled)
 
-        st.write(f"Predicted Tibia Used with {model_type.upper()}: {preds_tibia[0]:.1f}")
-        st.write(f"Predicted Femur Used with {model_type.upper()}: {preds_femur[0]:.1f}")
+        result_text_tibia = (f"Predicted Tibia Used with {model_type.upper()}: {preds_tibia[0]:.1f} (MAE: {self.calculate_metrics(X_new_scaled, preds_tibia, 'tibia', model_type)['mae']:.2f})")
+        result_text_femur = (f"Predicted Femur Used with {model_type.upper()}: {preds_femur[0]:.1f} (MAE: {self.calculate_metrics(X_new_scaled, preds_femur, 'femur', model_type)['mae']:.2f})")
+
+        messagebox.showinfo("Prediction", f"{result_text_tibia}\n{result_text_femur}")
 
 def main():
-    st.title("Tibia Femur Predictor")
-
     predictor = TibiaFemurPredictor()
 
-    uploaded_file = st.file_uploader("Upload Data File", type="csv")
-    if uploaded_file is not None:
-        predictor.upload_data(uploaded_file)
+    root = tk.Tk()
+    root.title("Tibia Femur Predictor")
 
-    if st.button("Train Models"):
-        predictor.train_models()
+    upload_button = tk.Button(root, text="Upload Data File", command=predictor.upload_data)
+    upload_button.pack()
 
-    if st.button("Evaluate Models"):
-        predictor.evaluate_models(['height_log', 'age_height_interaction', 'sex'])
+    train_button = tk.Button(root, text="Train Models", command=predictor.train_models)
+    train_button.pack()
 
-    age = st.slider("Age", 0, 100, 30)
-    height = st.slider("Height (inches)", 50, 90, 70)
-    sex = st.selectbox("Sex", ["Female", "Male"])
-    sex_val = 0 if sex == "Female" else 1
-    model_type = st.selectbox("Model", ["xgb", "gbr"])
+    evaluate_button = tk.Button(root, text="Evaluate Models", command=lambda: predictor.evaluate_models(['height_log', 'age_height_interaction', 'sex']))
+    evaluate_button.pack()
 
-    if st.button("Predict"):
-        predictor.predict(age, height, sex_val, model_type)
+    age_label = tk.Label(root, text="Age:")
+    age_label.pack()
+    age_entry = tk.Entry(root)
+    age_entry.pack()
 
-    if st.button("Plot Superimposed Learning Curves"):
-        predictor.plot_superimposed_learning_curves()
+    height_label = tk.Label(root, text="Height (inches):")
+    height_label.pack()
+    height_entry = tk.Entry(root)
+    height_entry.pack()
+
+    sex_label = tk.Label(root, text="Sex:")
+    sex_label.pack()
+    sex_var = tk.StringVar(root)
+    sex_var.set("Female")
+    sex_option = tk.OptionMenu(root, sex_var, "Female", "Male")
+    sex_option.pack()
+
+    model_label = tk.Label(root, text="Model:")
+    model_label.pack()
+    model_var = tk.StringVar(root)
+    model_var.set("xgb")
+    model_option = tk.OptionMenu(root, model_var, "xgb", "gbr")
+    model_option.pack()
+
+    def predict_callback():
+        age = float(age_entry.get())
+        height = float(height_entry.get())
+        sex = 0 if sex_var.get() == "Female" else 1
+        model_type = model_var.get()
+        predictor.predict(age, height, sex, model_type)
+
+    predict_button = tk.Button(root, text="Predict", command=predict_callback)
+    predict_button.pack()
+
+    root.mainloop()
 
 if __name__ == "__main__":
     main()
+
 
