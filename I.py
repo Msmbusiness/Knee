@@ -262,17 +262,20 @@ def main():
     if st.button("Predict"):
         combined_df = predictor.predict(age, height, sex_val)
 
-        def highlight_row(s):
-            femur_color = 'background-color: yellow'
-            tibia_color = 'background-color: pink'
-            styles = [''] * len(s)
-            if 'preferred_femur' in st.session_state and s['Femur Size'] == st.session_state['preferred_femur']:
-                styles[0] = femur_color  # Assuming 'Femur Size' is the first column
-            if 'preferred_tibia' in st.session_state and s['Tibial Size'] == st.session_state['preferred_tibia']:
-                styles[3] = tibia_color  # Assuming 'Tibial Size' is the fourth column
-            return styles
+        if combined_df is not None:
+            def highlight_row(s):
+                femur_color = 'background-color: yellow'
+                tibia_color = 'background-color: pink'
+                styles = [''] * len(s)
+                if 'preferred_femur' in st.session_state and s['Femur Size'] == st.session_state['preferred_femur']:
+                    styles[0] = femur_color  # Assuming 'Femur Size' is the first column
+                if 'preferred_tibia' in st.session_state and s['Tibial Size'] == st.session_state['preferred_tibia']:
+                    styles[3] = tibia_color  # Assuming 'Tibial Size' is the fourth column
+                return styles
 
-        st.dataframe(combined_df.style.apply(highlight_row, axis=1))
+            st.dataframe(combined_df.style.apply(highlight_row, axis=1))
+        else:
+            st.error("Prediction failed. Combined dataframe is None.")
 
     st.markdown("""
         **Disclaimer:** This application is for educational purposes only. It is not intended to diagnose, provide medical advice, or offer recommendations. The predictions made by this application are not validated and should be used for research purposes only.
@@ -280,9 +283,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
 
 
 
