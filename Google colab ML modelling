@@ -1,0 +1,290 @@
+# ─── Environment & garbage-collection setup ────────────────────────────────────
+import os, gc
+os.environ['PYDEVD_DISABLE_FILE_VALIDATION'] = '1'
+os.environ['PYTHONFLAGS'] = '-Xfrozen_modules=off'
+gc.enable()
+
+# ─── 1) Imports & Colab widget setup ──────────────────────────────────────────
+import warnings
+import numpy as np, pandas as pd, shap, matplotlib.pyplot as plt
+from io import BytesIO
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder, LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import Ridge
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import f1_score
+from sklearn.decomposition import PCA
+from imblearn.pipeline import Pipeline
+from imblearn.over_sampling import SMOTE
+from econml.metalearners import XLearner, SLearner
+from econml.inference import BootstrapInference
+from google.colab import output, files
+import ipywidgets as w
+from IPython.display import display, clear_output
+from imblearn.base import BaseSampler
+
+warnings.filterwarnings("ignore")
+output.enable_custom_widget_manager()
+
+# ─── Custom Oversampler for high/medium/low risk ──────────────────────────────
+class CustomOversampler(BaseSampler):
+    _sampling_type = 'over-sampling'
+    def __init__(self, sampling_strategy=0.2, random_state=None):
+        super().__init__()
+        self.sampling_strategy = sampling_strategy
+        self.random_state = random_state
+        self.rf = RandomForestClassifier(random_state=random_state)
+    def _fit_resample(self, X, y):
+        np.random.seed(self.random_state)
+        self.rf.fit(X, y)
+        probs = self.rf.predict_proba(X)[:, 1]
+        high_risk = probs > 0.5
+        med_risk  = (probs >= 0.2) & (probs <= 0.5)
+        low_risk  = probs < 0.2
+        min_mask  = y == 1
+        n_min     = min_mask.sum()
+        n_samples = int(self.sampling_strategy * (len(y) - n_min))
+        X_new, y_new = [], []
+        for _ in range(n_samples):
+            idx = np.random.choice(np.where(min_mask)[0])
+            pool = (
+                np.where(high_risk & min_mask)[0] if probs[idx] > 0.5 else
+                np.where(med_risk & min_mask)[0] if probs[idx] >= 0.2 else
+                np.where(low_risk & min_mask)[0]
+            )
+            if len(pool) == 0:
+                pool = np.where(min_mask)[0]
+            idx2 = np.random.choice(pool)
+            alpha = np.random.uniform(0.5, 1.0)
+            X_new.append(X[idx] + alpha * (X[idx2] - X[idx]))
+            y_new.append(1)
+        return np.vstack([X, np.array(X_new)]), np.hstack([y, np.array(y_new)])
+
+# ─── 2) Upload & subsample ─────────────────────────────────────────────────────
+print("🔽 Upload your CSV ⇣")
+up = files.upload()
+df = pd.read_csv(BytesIO(next(iter(up.values()))))
+df = df.sample(frac=0.75, random_state=42).reset_index(drop=True)
+
+# ─── 3) Clean SURGEON & ensure binary target ───────────────────────────────────
+df['SURGEON'] = pd.to_numeric(df['SURGEON'], errors='coerce').fillna(0).astype(float)
+df.replace(['','UNK','na','NA','NaN'], np.nan, inplace=True)
+for c in df.select_dtypes(include='number'):
+    if c != 'target':
+        df[c].fillna(df[c].median(), inplace=True)
+for c in df.select_dtypes(exclude='number'):
+    df[c].fillna(df[c].mode().iloc[0] if not df[c].mode().empty else 0, inplace=True)
+df['target'] = (pd.to_numeric(df['target'], errors='coerce').fillna(0) > 0).astype(int)
+
+# ─── 4) Feature engineering ───────────────────────────────────────────────────
+df['BMI_class'] = pd.cut(df['BMI'], bins=[0,30,38,np.inf], labels=['<=30','>30,<=38','>38'])
+df = df[df['BMI_class']!='>38'].copy()
+df['PreAlign_ord'] = OrdinalEncoder(categories=[['0','1','2']]).fit_transform(df[['PreAlign']]).astype(int)
+df['AGE_BMI_int'] = df['AGE'] * df['BMI']
+df = pd.get_dummies(df, columns=['SURGEON','BMI_class'], prefix=['SURG','BMI_class'], dtype=float)
+df['SEX'] = LabelEncoder().fit_transform(df['SEX'].astype(str).str.strip().replace({'0.0':'0','1.0':'1'}))
+
+feat_cols = [
+    'SURG_0.0','SURG_1.0','SURG_2.0',
+    'SEX','AGE','PreExt','PreAlign_ord','BMI','AGE_BMI_int','BMI_class_<=30'
+]
+for c in feat_cols:
+    df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+scaler = StandardScaler().fit(df[feat_cols])
+df[feat_cols] = scaler.transform(df[feat_cols])
+
+# ─── 5) Split & RF pipeline ───────────────────────────────────────────────────
+X = df[feat_cols]
+T = (
+    df[['SURG_0.0','SURG_1.0','SURG_2.0']]
+      .idxmax(axis=1)
+      .str.replace('SURG_','')
+      .astype(float)
+      .astype(int)
+)
+y = df['target']
+X_tr, X_te, T_tr, T_te, y_tr, y_te = train_test_split(
+    X, T, y, test_size=0.2, stratify=y, random_state=42
+)
+
+rf_pipe = Pipeline([
+    ('sampler', SMOTE(sampling_strategy=0.2, random_state=42)),
+    ('clf', RandomForestClassifier(
+        n_estimators=30, min_samples_leaf=10, max_depth=10,
+        class_weight='balanced_subsample', random_state=42, n_jobs=-1
+    ))
+]).fit(X_tr, y_tr)
+
+cal_rf = CalibratedClassifierCV(
+    rf_pipe.named_steps['clf'], cv='prefit', method='isotonic'
+).fit(X_tr, y_tr)
+
+probs = rf_pipe.predict_proba(X_te)[:,1]
+opt_thr = np.linspace(0.05,0.5,46)[
+    np.argmax([f1_score(y_te, probs>=t) for t in np.linspace(0.05,0.5,46)])
+]
+
+# ─── 6) SHAP for RF ─────────────────────────────────────────────────────────────
+expl_rf = shap.TreeExplainer(
+    rf_pipe.named_steps['clf'], feature_perturbation='interventional', check_additivity=False
+)
+
+# ─── 7) Causal learners ────────────────────────────────────────────────────────
+inference = BootstrapInference(n_bootstrap_samples=2)
+ridge_y  = Ridge(alpha=1.0)
+prop_clf = RandomForestClassifier(
+    n_estimators=30, min_samples_leaf=10, class_weight='balanced',
+    random_state=0, n_jobs=-1
+)
+
+xl = XLearner(models=[ridge_y]*3, propensity_model=prop_clf)
+prop_clf.fit(X_tr, T_tr)
+xl.fit(y_tr, T_tr, X=X_tr, inference=inference)
+
+sl = SLearner(overall_model=ridge_y).fit(
+    y_tr, T_tr, X=X_tr, inference=inference
+)
+
+expl_xl_dict = {
+    t: shap.LinearExplainer(
+        xl.models[t], X_tr, feature_perturbation='interventional'
+    ) for t in range(3)
+}
+
+T_tr_oh = pd.get_dummies(T_tr, prefix='T')
+X_tr_aug = pd.concat(
+    [X_tr.reset_index(drop=True), T_tr_oh.reset_index(drop=True)], axis=1
+)
+expl_sl = shap.LinearExplainer(
+    sl.overall_model, X_tr_aug, feature_perturbation='interventional'
+)
+
+# ─── 8) Interactive dashboard ─────────────────────────────────────────────────
+thr_sl           = w.FloatSlider(value=opt_thr, min=0, max=1, step=0.01, description='Thr:')
+bmi_sl           = w.FloatSlider(value=float(df['BMI'].mean()), min=20, max=40, step=0.1, description='BMI:')
+age_sl           = w.IntSlider(value=int(df['AGE'].mean()), min=55, max=85, description='Age:')
+pre_sl           = w.IntSlider(value=int(df['PreExt'].mean()), min=-5, max=15, description='PreExt:')
+sex_sl           = w.Dropdown(options=[0,1], description='SEX:')
+pal_sl           = w.Dropdown(options=[0,1,2], description='PreAlign:')
+sur_sl           = w.Dropdown(options=[0,1,2], description='SURGEON:')
+bmi_class_sl     = w.Dropdown(options=['<=30','>30,<=38'], description='BMI_class:')
+sampler_dropdown = w.Dropdown(options=['SMOTE','Custom'], description='Oversampler:')
+out              = w.Output()
+
+pca             = PCA(n_components=2).fit(X_tr)
+X_tr_pca        = pca.transform(X_tr)
+plot_display    = None
+
+def ui_update(_):
+    global plot_display
+    with out:
+        out.clear_output(wait=True)
+
+        # assemble input row
+        raw = {
+            'SURG_0.0': float(sur_sl.value == 0),
+            'SURG_1.0': float(sur_sl.value == 1),
+            'SURG_2.0': float(sur_sl.value == 2),
+            'SEX': float(sex_sl.value),
+            'AGE': float(age_sl.value),
+            'PreExt': float(pre_sl.value),
+            'PreAlign_ord': float(pal_sl.value),
+            'BMI': float(bmi_sl.value),
+            'BMI_class_<=30': float(bmi_class_sl.value == '<=30'),
+        }
+        raw['AGE_BMI_int'] = raw['AGE'] * raw['BMI']
+        X_row         = pd.DataFrame([raw])[feat_cols]
+        X_row_scaled  = scaler.transform(X_row)
+        X_row_pca     = pca.transform(X_row_scaled)
+
+        # choose oversampler
+        sampler = (SMOTE(sampling_strategy=0.2, random_state=42)
+                   if sampler_dropdown.value == 'SMOTE'
+                   else CustomOversampler(sampling_strategy=0.2, random_state=42))
+
+        # oversample for PCA plot
+        X_samp, y_samp = sampler.fit_resample(X_tr.to_numpy(), y_tr.to_numpy())
+        X_samp_pca     = pca.transform(X_samp)
+        synth_mask     = np.arange(len(y_samp)) >= len(y_tr)
+        X_synth_pca    = X_samp_pca[synth_mask]
+
+        # RF predict + SHAP
+        ptear   = cal_rf.predict_proba(X_row_scaled)[0,1]
+        rf_shap = expl_rf.shap_values(X_row_scaled)
+        rf_flat = np.array(rf_shap[1] if isinstance(rf_shap, list) else rf_shap).flatten()
+
+        # XLearner effect + SHAP
+        eff = xl.effect(X_row_scaled)
+        cate_x = eff[0] if eff.ndim == 1 else eff[0, sur_sl.value]
+        lows, highs = xl.effect_interval(X_row_scaled)
+        lo_x, hi_x = (lows[0], highs[0]) if lows.ndim == 1 else (lows[0, sur_sl.value], highs[0, sur_sl.value])
+        expl_sel = expl_xl_dict[sur_sl.value]
+        x_shap   = expl_sel.shap_values(X_row_scaled)
+        x_flat   = x_shap[0] if isinstance(x_shap, list) else x_shap
+
+        # SLearner effect + SHAP
+        cate_s     = sl.effect(X_row_scaled)[0]
+        lows_s, highs_s = sl.effect_interval(X_row_scaled)
+        lo_s, hi_s = lows_s[0], highs_s[0]
+        Trow = (
+            pd.get_dummies(pd.Series([sur_sl.value]), prefix='T')
+            .reindex(columns=[c for c in X_tr_aug.columns if c.startswith('T_')], fill_value=0)
+        )
+        X_aug      = np.hstack([X_row_scaled, Trow.to_numpy()])
+        s_shap     = expl_sl.shap_values(X_aug)[0]
+
+        # textual output
+        lbl = int(ptear >= thr_sl.value)
+        print(f"Pr(tear)={ptear:.2%}, label={lbl} (thr={thr_sl.value:.2f})")
+        print(f"CATE XLearner: {cate_x:+.2%} (95% CI {lo_x:+.2%}…{hi_x:+.2%})")
+        print(f"CATE SLearner: {cate_s:+.2%} (95% CI {lo_s:+.2%}…{hi_s:+.2%})")
+
+        # plotting
+        fig, axes = plt.subplots(1, 4, figsize=(20, 4))
+
+        # T-0: RF Risk — only show selected SURGEON dummy among the three
+        selected_surg = f"SURG_{sur_sl.value}.0"
+        plot_indices = [i for i, c in enumerate(feat_cols) if not c.startswith('SURG_') or c == selected_surg]
+        vals = rf_flat[plot_indices]
+        names = [feat_cols[i].replace('_',' ') for i in plot_indices]
+        pos_idx = np.where(vals > 0)[0]
+        neg_idx = np.where(vals < 0)[0]
+
+        if pos_idx.size > 0:
+            pos_vals = vals[pos_idx]
+            pn = (pos_vals - pos_vals.min()) / (pos_vals.max() - pos_vals.min() + 1e-10)
+            pos_cols = [plt.cm.Reds(0.3 + 0.7 * v) for v in pn]
+            axes[0].barh(pos_idx, pos_vals, color=pos_cols)
+            for i, val in zip(pos_idx, pos_vals): axes[0].text(val, i, f"{val:+.2f}", va='center', ha='left', fontsize=8)
+        if neg_idx.size > 0:
+            neg_vals = vals[neg_idx]
+            nn = (neg_vals - neg_vals.min()) / (neg_vals.max()-neg_vals.min()+1e-10)
+            neg_cols = [plt.cm.Blues(0.3 + 0.7 * v) for v in nn]
+            axes[0].barh(neg_idx, neg_vals, color=neg_cols)
+            for i, val in zip(neg_idx, neg_vals): axes[0].text(val, i, f"{val:+.2f}", va='center', ha='right', fontsize=8)
+        axes[0].axvline(0, color='black')
+        axes[0].set_yticks(np.arange(len(names))); axes[0].set_yticklabels(names)
+        axes[0].invert_yaxis(); axes[0].set_title('T-0: RF Risk'); axes[0].set_xlabel('SHAP Value')
+
+        axes[1].barh(feat_cols, x_flat.flatten()); axes[1].axvline(0, color='black'); axes[1].invert_yaxis(); axes[1].set_title(f'T-1: XLearner CATE (Surgeon {sur_sl.value})')
+        axes[2].barh(X_tr_aug.columns, s_shap.flatten()); axes[2].axvline(0, color='black'); axes[2].invert_yaxis(); axes[2].set_title('T-2: SLearner CATE')
+
+        axes[3].scatter(X_tr_pca[y_tr==0,0], X_tr_pca[y_tr==0,1], c='grey', alpha=0.5, s=20, label='Majority')
+        axes[3].scatter(X_tr_pca[y_tr==1,0], X_tr_pca[y_tr==1,1], c='blue', alpha=0.8, s=100, label='Minority')
+        axes[3].scatter(X_synth_pca[:,0], X_synth_pca[:,1], c='red', alpha=0.5, s=20, label='Synthetic')
+        axes[3].scatter(X_row_pca[0,0], X_row_pca[0,1], c='black', marker='*', s=200, label='New')
+        axes[3].set_title(f'PCA Plot ({sampler_dropdown.value})'); axes[3].legend(); axes[3].grid(True)
+
+        plt.tight_layout()
+        if plot_display is None:
+            plot_display = display(fig, display_id=True)
+        else:
+            plot_display.update(fig)
+        plt.close(fig)
+
+for wd in [thr_sl, bmi_sl, age_sl, pre_sl, sex_sl, pal_sl, sur_sl, bmi_class_sl, sampler_dropdown]:
+    wd.observe(ui_update, names='value')
+controls = w.VBox([thr_sl, w.HBox([bmi_sl, age_sl, pre_sl]), w.HBox([sex_sl, pal_sl, sur_sl, bmi_class_sl]), sampler_dropdown])
+display(controls, out)
+ui_update(None)
